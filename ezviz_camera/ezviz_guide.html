@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EZVIZ H8c + Python — Study Guide</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2128; --ink:#e6edf3; --muted:#9aa7b2;
+    --accent:#4cc2ff; --ok:#56d364; --warn:#e3b341; --bad:#f85149;
+    --code:#0c1116; --line:#2a333d;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.6 system-ui,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:920px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:30px; margin:0 0 4px; }
+  h2 { font-size:22px; margin:38px 0 12px; border-bottom:1px solid var(--line);
+    padding-bottom:6px; }
+  h3 { font-size:17px; margin:22px 0 8px; color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 8px; }
+  p { margin:10px 0; }
+  code { background:var(--code); padding:2px 6px; border-radius:4px;
+    font-family:Consolas,Menlo,monospace; font-size:13.5px; color:#ffd9a8; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px;
+    padding:14px 16px; overflow-x:auto; }
+  pre code { background:none; padding:0; color:#d6e1ec; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left;
+    vertical-align:top; }
+  th { background:var(--panel); }
+  .card { background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:16px 18px; margin:16px 0; }
+  .tag { display:inline-block; font-size:12px; padding:2px 8px; border-radius:20px;
+    font-weight:600; }
+  .t-ok { background:rgba(86,211,100,.15); color:var(--ok); }
+  .t-warn { background:rgba(227,179,65,.15); color:var(--warn); }
+  .t-bad { background:rgba(248,81,73,.15); color:var(--bad); }
+  .note { border-left:3px solid var(--accent); padding:8px 14px; margin:12px 0;
+    background:rgba(76,194,255,.07); border-radius:0 8px 8px 0; }
+  .warn { border-left-color:var(--warn); background:rgba(227,179,65,.07); }
+  ul { margin:8px 0; padding-left:22px; }
+  li { margin:4px 0; }
+  .kbd { background:#222b33; border:1px solid var(--line); border-radius:4px;
+    padding:1px 7px; font-size:13px; }
+  footer { margin-top:50px; color:var(--muted); font-size:13px;
+    border-top:1px solid var(--line); padding-top:14px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>EZVIZ H8c + Python</h1>
+  <p class="sub">Live stream, PTZ control, human detection — study guide.
+     Camera IP <code>192.168.100.29</code>.</p>
+
+  <div class="card">
+    <strong>TL;DR — what works how</strong>
+    <table>
+      <tr><th>Goal</th><th>Method</th><th>Where</th><th>Status</th></tr>
+      <tr><td>Live video</td><td>RTSP + OpenCV</td><td>Local network</td>
+          <td><span class="tag t-ok">Works locally</span></td></tr>
+      <tr><td>Pan / Tilt</td><td>EZVIZ cloud API (<code>pyezvizapi</code>)</td>
+          <td>Internet + account</td>
+          <td><span class="tag t-warn">Cloud only</span></td></tr>
+      <tr><td>Human detection data</td><td>EZVIZ cloud API / MQTT push</td>
+          <td>Internet + account</td>
+          <td><span class="tag t-warn">Cloud only</span></td></tr>
+    </table>
+    <p style="margin:6px 0 0;color:var(--muted);font-size:14px;">
+      Key point: <b>video is local (RTSP)</b>, but <b>PTZ and AI detection are not
+      exposed locally</b> — they ride on your EZVIZ account in the cloud.</p>
+  </div>
+
+  <h2>0. Setup</h2>
+  <pre><code>pip install opencv-python      # already installed: 4.13.0
+pip install pyezvizapi          # for PTZ + detection (cloud)</code></pre>
+  <p>Enable RTSP first in the EZVIZ phone app:<br>
+     <em>Device Settings → your camera → … → Local Service / LAN Live View → RTSP on</em>,
+     and note the <b>verification code</b> (6 uppercase chars on the camera label).</p>
+
+  <h2>1. Live stream (RTSP + OpenCV)</h2>
+  <p class="sub">Script: <code>stream.py</code></p>
+
+  <h3>RTSP URL format</h3>
+  <pre><code>rtsp://admin:&lt;CODE&gt;@192.168.100.29:554/H264/ch1/main/av_stream   # HD
+rtsp://admin:&lt;CODE&gt;@192.168.100.29:554/H264/ch1/sub/av_stream    # SD (smoother)</code></pre>
+  <ul>
+    <li>Username is always <code>admin</code>.</li>
+    <li>Password = the <b>verification code</b> (NOT your account password).</li>
+    <li>Port <code>554</code>. Some firmwares also accept
+        <code>/Streaming/Channels/101</code> (main) and <code>/102</code> (sub).</li>
+  </ul>
+
+  <h3>Run it</h3>
+  <pre><code># PowerShell — set code once
+$env:EZVIZ_CODE="ABCDEF"
+python stream.py            # main stream
+python stream.py --sub      # low-res, smoother over WiFi</code></pre>
+  <p>Keys in the window: <span class="kbd">q</span> quit,
+     <span class="kbd">s</span> save snapshot.</p>
+
+  <div class="note">
+    The script sets <code>OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp</code>.
+    TCP is much more reliable than UDP over WiFi and stops the torn / grey frames.
+  </div>
+
+  <h3>Core of the code</h3>
+  <pre><code>import os, cv2
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
+url = "rtsp://admin:CODE@192.168.100.29:554/H264/ch1/main/av_stream"
+cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+while True:
+    ok, frame = cap.read()
+    if not ok: continue
+    cv2.imshow("EZVIZ H8c", frame)
+    if cv2.waitKey(1) &amp; 0xFF == ord("q"): break</code></pre>
+
+  <h2>2. Pan / Tilt control</h2>
+  <p class="sub">Script: <code>ptz_and_detection.py</code></p>
+  <p><b>Is it possible from Python? Yes — but via the cloud, not the LAN.</b>
+     The H8c does not expose PTZ over local RTSP/ONVIF reliably. The community
+     library <code>pyezvizapi</code> logs into your EZVIZ account and sends PTZ
+     commands through EZVIZ servers.</p>
+
+  <pre><code># PowerShell
+$env:EZVIZ_USER="you@email.com"
+$env:EZVIZ_PASS="account_password"
+$env:EZVIZ_SERIAL="BB1234567"      # serial on the label / in app
+
+python ptz_and_detection.py move up 5
+python ptz_and_detection.py move left 3</code></pre>
+
+  <p>Real API in <code>pyezvizapi 1.0.x</code> (installed) — move = START then STOP:</p>
+  <pre><code>import time
+from pyezvizapi.client import EzvizClient
+client = EzvizClient(user, password, "eu")     # region: eu / us
+client.login()
+
+# ptz_control(command, serial, action, speed=5)
+#   command = "UP"|"DOWN"|"LEFT"|"RIGHT"   action = "START"|"STOP"
+client.ptz_control("UP", serial, "START", 5)
+time.sleep(0.6)                                 # nudge duration
+client.ptz_control("UP", serial, "STOP", 5)
+
+# absolute coordinate move (0..1):
+client.ptz_control_coordinates(serial, 0.4, 0.6)</code></pre>
+
+  <div class="note warn">
+    No official API docs exist — <code>pyezvizapi</code> is reverse-engineered.
+    Method names change between versions. To list what your install offers:
+    <code>python -c "from pyezvizapi.client import EzvizClient; print([m for m in dir(EzvizClient) if not m.startswith('_')])"</code>
+    — see the <a href="https://github.com/RenierM26/pyEzvizApi">GitHub repo</a>.
+  </div>
+
+  <h2>3. Human detection data</h2>
+  <p><b>Possible? Partly — via the cloud account, not the local stream.</b></p>
+  <ul>
+    <li>The camera runs AI human detection on-device, but the <b>events are pushed
+        to the EZVIZ cloud</b>, not served on the LAN.</li>
+    <li><code>pyezvizapi</code> can read status/alarm fields such as
+        <code>Motion_Trigger</code>, PIR/alarm-notify flags, and pull recent
+        alarm snapshots; real-time events arrive via the app's MQTT push channel.</li>
+    <li>Field names differ by model/firmware — dump everything first:</li>
+  </ul>
+  <pre><code>python ptz_and_detection.py status   # prints full device info + detection fields</code></pre>
+
+  <div class="note">
+    <b>Want fully-local human detection instead?</b> Run detection yourself on the
+    RTSP frames you already get in <code>stream.py</code> — feed each frame to a model
+    (OpenCV HOG, YOLO/Ultralytics, or MediaPipe). That needs no cloud and no account,
+    and you fully control the data. Good follow-up if the cloud route is too limited.
+  </div>
+
+  <h2>Troubleshooting</h2>
+  <table>
+    <tr><th>Symptom</th><th>Fix</th></tr>
+    <tr><td>Stream won't open</td><td>RTSP enabled in app? Right verification code
+        (not account password)? PC on same LAN as camera?</td></tr>
+    <tr><td>Grey / torn frames</td><td>Use TCP transport (script already does) or
+        switch to <code>--sub</code> stream.</td></tr>
+    <tr><td>401 / auth error</td><td>Code is case-sensitive, uppercase. Re-check label.</td></tr>
+    <tr><td>PTZ method error</td><td>Library version mismatch — list methods, see §2 note.</td></tr>
+    <tr><td>Login fails</td><td>Wrong region. Try <code>$env:EZVIZ_REGION="us"</code>.</td></tr>
+  </table>
+
+  <footer>
+    Files: <code>stream.py</code> · <code>ptz_and_detection.py</code> ·
+    this guide. Tested with OpenCV 4.13, Python 3.14.<br>
+    Sources: iSpyConnect EZVIZ camera list · pyezvizapi (PyPI / GitHub RenierM26).
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,4 @@
+opencv-python
+ultralytics
+ncnn          # Raspberry Pi inference backend (no torch -> no SIGILL on Cortex-A72)
+pyezvizapi
