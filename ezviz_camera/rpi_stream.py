@@ -37,16 +37,6 @@ import os
 import sys
 import time
 
-# --- Raspberry Pi "Illegal instruction" (SIGILL) guards -----------------------
-# Must be set BEFORE numpy / cv2 / torch are imported, or they have no effect.
-# Pi 4 = Cortex-A72 (ARMv8.0). Some BLAS builds auto-detect a newer core and
-# emit ARMv8.2 instructions (dotprod/fp16) the A72 lacks -> SIGILL inside the
-# numpy/predict math. Force the generic ARMv8 kernel path.
-os.environ.setdefault("OPENBLAS_CORETYPE", "ARMV8")
-# Keep BLAS single-threaded; oversubscription on the Pi can also trip bad kernels
-# and just adds contention with 4 cores busy decoding video.
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-
 import cv2
 
 # Force FFmpeg to use TCP transport — far more reliable than UDP over WiFi.
@@ -62,41 +52,15 @@ def build_url(ip, code, sub):
 
 
 def load_model(model_name):
-    """Lazy-load the YOLO model.
-
-    On the Pi, prefer an NCNN model directory (e.g. 'yolov8n_ncnn_model') —
-    NCNN runs the network with NEON kernels and NO PyTorch, which avoids the
-    'Illegal instruction' (SIGILL) crash that torch's CPU kernels trigger on the
-    Cortex-A72, and is ~2-3x faster. A plain '.pt' falls back to the torch
-    backend (fine on a PC, but the source of the SIGILL on the Pi).
-    """
+    """Lazy-load the YOLO model. Weights auto-download on first use."""
     try:
         from ultralytics import YOLO
     except ImportError:
         print("[error] ultralytics not installed. Run: pip install ultralytics",
               file=sys.stderr)
         sys.exit(1)
-
-    is_ncnn = os.path.isdir(model_name) or model_name.endswith("_ncnn_model")
-    if is_ncnn and not os.path.isdir(model_name):
-        print(f"[error] NCNN model dir '{model_name}' not found. Export it on a "
-              f"machine where torch works:\n"
-              f"    yolo export model=yolov8n.pt format=ncnn\n"
-              f"then copy the '{model_name}' folder next to this script.",
-              file=sys.stderr)
-        sys.exit(1)
-    if is_ncnn:
-        try:
-            import ncnn  # noqa: F401
-        except ImportError:
-            print("[error] ncnn runtime not installed. Run: pip install ncnn",
-                  file=sys.stderr)
-            sys.exit(1)
-
-    print(f"Loading YOLO model '{model_name}'"
-          f"{' (NCNN backend)' if is_ncnn else ''} ...")
-    # task='detect' avoids a guess-warning when loading an NCNN dir.
-    return YOLO(model_name, task="detect")
+    print(f"Loading YOLO model '{model_name}' (first run downloads weights)...")
+    return YOLO(model_name)
 
 
 def count_people(model, frame, conf):
@@ -119,10 +83,8 @@ def main():
                          "(or set EZVIZ_CODE env var)")
     ap.add_argument("--main", action="store_true",
                     help="use main (HD) stream; default is sub (low-res, faster)")
-    ap.add_argument("--model", default="yolov8n_ncnn_model",
-                    help="model to load. Default = NCNN dir 'yolov8n_ncnn_model' "
-                         "(no torch, no SIGILL on Pi). Pass 'yolov8n.pt' to use "
-                         "the torch backend instead.")
+    ap.add_argument("--model", default="yolov8n.pt",
+                    help="YOLO weights (n=fastest, recommended on Pi 4)")
     ap.add_argument("--conf", type=float, default=0.35,
                     help="detection confidence threshold (0-1)")
     ap.add_argument("--every", type=int, default=3,
