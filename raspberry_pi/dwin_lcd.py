@@ -239,7 +239,10 @@ class DwinLCD:
               f" cmd={cmd_name}"
               f" addr={'0x%04X' % addr if addr is not None else '?'}"
               f" data=[{data.hex(' ')}]")
-        self._ser.write(raw)
+        n = self._ser.write(raw)
+        self._ser.flush()   # block until the bytes are actually clocked out
+        if n != len(raw):
+            print(f"[DWIN TX] WARNING: wrote {n}/{len(raw)} bytes")
 
     def _query(self, addr: int, n_words: int,
                timeout: Optional[float] = None) -> bytes:

@@ -71,11 +71,13 @@ class DwinUI:
     # outputHandler(): touch on an output button -> toggle that output, then clear.
     def output_handler(self, addr, value):
         if value == TOUCH_ON:
-            idx = addr - 0x0220                       # output index 0..15
-            state = not self.outputs.get(addr, False)
-            self.outputs[addr] = state
+            idx = addr - 0x0010                       # output index 0..15
+            # state = not self.outputs.get(addr, False)
+            state = self.dwin.read_single_reg(idx)
+            self.outputs[addr] = ~state
             # TODO: drive the real output here -- GPIO pin, Modbus coil, etc.
             self.dwin.write_single_reg(addr, 0x0000, ack=False)   # consume press
+            self.dwin.write_single_reg(idx, ~state)
             print(f"output {idx} (0x{addr:04X}) -> {'ON' if state else 'OFF'}")
 
 
@@ -102,13 +104,13 @@ def main():
             if ev is not None:
                 ui.handle_frame(ev)
             else:
-                # No touch this cycle. Every ~3 s prove the Pi -> HMI direction.
-                # IMPORTANT: a touch upload (HMI -> Pi) needs only the RX wire, so
-                # it can keep working even when the Pi TX line is dead. A page
-                # switch / write needs the TX line, so test that separately:
-                #   * buzzer beep  -> audible, needs NO display/VP project config
-                #   * read 0x0014  -> round trip (Pi TX -> HMI -> Pi RX); getting
-                #                     a reply proves writes also reach the panel.
+            # No touch this cycle. Every ~3 s prove the Pi -> HMI direction.
+            # IMPORTANT: a touch upload (HMI -> Pi) needs only the RX wire, so
+            # it can keep working even when the Pi TX line is dead. A page
+            # switch / write needs the TX line, so test that separately:
+            #   * buzzer beep  -> audible, needs NO display/VP project config
+            #   * read 0x0014  -> round trip (Pi TX -> HMI -> Pi RX); getting
+            #                     a reply proves writes also reach the panel.
                 now = time.monotonic()
                 if now - last_test >= 3.0:
                     last_test = now
@@ -119,7 +121,7 @@ def main():
                         print(f"[TX test] OK - HMI reachable, current page={page}")
                     except DwinTimeout:
                         print("[TX test] FAIL - no reply. Pi TX -> DWIN RX is not "
-                              "getting through (wire / level-shifter / baud).")
+                                "getting through (wire / level-shifter / baud).")
     except KeyboardInterrupt:
         print("\nstopped.")
     finally:

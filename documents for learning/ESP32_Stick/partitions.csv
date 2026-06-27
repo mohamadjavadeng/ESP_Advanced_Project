@@ -1,0 +1,16 @@
+# ESP32_Stick partition table  --  LilyGO T-SIM7000G, 4 MB flash, NO OTA.
+#
+# One large factory app slot (3.75 MB) so the WiFi + TinyGSM + MPU6050-DMP +
+# ArduinoJson image links with room to spare. The stock esp32 "default.csv"
+# splits flash into two ~1.3 MB OTA slots, which this single-image firmware does
+# not need and could overflow. SPIFFS (192 KB) is reserved for future on-device
+# config/log. Offsets sum to exactly 0x400000 = 4 MB.
+#
+# Copied from ESP32_IP_Connection/partitions.csv and applied to THIS project via
+# board_build.partitions in platformio.ini. The original is left untouched so
+# the ESP32_IP_Connection build is unaffected.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+app0,     app,  factory, 0x10000,  0x3C0000,
+spiffs,   data, spiffs,  0x3D0000, 0x30000,
