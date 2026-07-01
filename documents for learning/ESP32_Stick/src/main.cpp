@@ -43,10 +43,11 @@
 #include <TinyGsmClient.h>
 
 // ------------------------------------------------------------------ config ---
-const char *WIFI_SSID = "A 3";          // site 4G-router SSID (note the space)
-const char *WIFI_PASS = "98832988";
-
-const char    *RPI_HOST      = "192.168.0.110";
+// const char *WIFI_SSID = "A 3";          // site 4G-router SSID (note the space)
+// const char *WIFI_PASS = "98832988";
+const char *WIFI_SSID = "AMAN 2";          // site 4G-router SSID (note the space)
+const char *WIFI_PASS = "AMAN2018";
+const char    *RPI_HOST      = "192.168.100.43";
 const uint16_t RPI_PORT      = 5000;
 const char    *INGEST_PATH   = "/ingest";    // angle stream (existing)
 const char    *LOCATION_PATH = "/location";  // NEW gps stream (add Pi-side route)

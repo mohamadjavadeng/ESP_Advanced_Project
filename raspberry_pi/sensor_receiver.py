@@ -7,6 +7,12 @@ Both ESP32 sensor units PUSH their RAW tilt angle here over the field WiFi:
     POST /ingest
     {"id":"stick"|"beam","angle_deg":12.3,"mpu_ok":true,"seq":N,"uptime_ms":..}
 
+The stick unit (LilyGO T-SIM7000G) ALSO pushes its GNSS fix every ~5 min:
+
+    POST /location
+    {"id":"stick","gps_ok":true,"lat":..,"lon":..,"alt_m":..,"speed_kph":..,
+     "sats":..,"hacc_m":..,"seq":N,"uptime_ms":..}
+
 This service does what the old ESP32 server used to do, but on the Pi:
   * stores the latest sample per unit (with an arrival timestamp),
   * applies sign + zero-offset calibration and computes the depth
@@ -47,12 +53,22 @@ state = {
     "stick": {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
     "beam":  {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
 }
+# Latest GNSS fix per unit (only units with a SIM7000G populate this -- the
+# stick does by default; the beam stays all-zero unless it gets a modem too).
+location = {
+    "stick": {"gps_ok": False, "lat": 0.0, "lon": 0.0, "alt_m": 0.0,
+              "speed_kph": 0.0, "sats": 0, "hacc_m": 0.0, "seq": -1, "ts": 0.0},
+    "beam":  {"gps_ok": False, "lat": 0.0, "lon": 0.0, "alt_m": 0.0,
+              "speed_kph": 0.0, "sats": 0, "hacc_m": 0.0, "seq": -1, "ts": 0.0},
+}
 cfg = {
     "L1": 1.1, "L2": 1.0,            # boom / stick lengths (m)
     "boom_sign": 1.0, "stick_sign": 1.0,
     "boom_offset_deg": 0.0, "stick_offset_deg": 0.0,
     "target_depth": 1.5,
-    "stale_ms": 1500,                # a unit older than this is "stale"
+    "stale_ms": 1500,                # an angle unit older than this is "stale"
+    "gps_stale_ms": 11 * 60 * 1000,  # a GNSS fix older than this (>2x the 5-min
+                                     # post interval) is reported gps_ok=false
 }
 
 
@@ -80,6 +96,21 @@ def build_status():
         sensor_ok = (boom["mpu_ok"] and stick["mpu_ok"]
                      and 0 <= boom_age < stale and 0 <= stick_age < stale)
         depth_alarm = cfg["target_depth"] > 0 and depth >= cfg["target_depth"]
+        loc = {}
+        for uid, L in location.items():
+            age = int((now - L["ts"]) * 1000) if L["ts"] else -1
+            fresh = 0 <= age < cfg["gps_stale_ms"]
+            loc[uid] = {
+                "gps_ok": bool(L["gps_ok"] and fresh),  # device fix AND not stale
+                "lat": round(L["lat"], 6),
+                "lon": round(L["lon"], 6),
+                "alt_m": round(L["alt_m"], 1),
+                "speed_kph": round(L["speed_kph"], 1),
+                "sats": L["sats"],
+                "hacc_m": round(L["hacc_m"], 1),
+                "age_ms": age,
+                "seq": L["seq"],
+            }
         return {
             "boom_deg": round(boom["angle_deg"], 2),
             "stick_deg": round(stick["angle_deg"], 2),
@@ -89,6 +120,7 @@ def build_status():
             "sensor_ok": sensor_ok,        # False => a sensor is dead/stale (alarm!)
             "boom_age_ms": boom_age,
             "stick_age_ms": stick_age,
+            "location": loc,               # per-unit latest GNSS fix
         }
 
 
@@ -113,6 +145,35 @@ def ingest():
     print(f"[{uid:>5}] angle={angle:7.2f}  mpu_ok={mpu_ok!s:<5}  seq={seq:<6} | "
           f"depth={st['depth_m']:6.3f}m  alarm={st['depth_alarm']!s:<5}  "
           f"sensor_ok={st['sensor_ok']}", flush=True)
+    return jsonify(ok=True)
+
+
+@app.post("/location")
+def location_ingest():
+    """Receive one GNSS fix from a unit's SIM7000G (stick posts ~every 5 min)."""
+    d = request.get_json(silent=True) or {}
+    uid = d.get("id")
+    if uid not in location:
+        return jsonify(error="unknown id (use 'stick' or 'beam')"), 400
+    with _lock:
+        L = location[uid]
+        L["gps_ok"] = bool(d.get("gps_ok", False))
+        if L["gps_ok"]:                     # only overwrite coords on a real fix
+            L["lat"] = float(d.get("lat", L["lat"]))
+            L["lon"] = float(d.get("lon", L["lon"]))
+            L["alt_m"] = float(d.get("alt_m", L["alt_m"]))
+            L["speed_kph"] = float(d.get("speed_kph", L["speed_kph"]))
+            L["sats"] = int(d.get("sats", L["sats"]))
+            L["hacc_m"] = float(d.get("hacc_m", L["hacc_m"]))
+        L["seq"] = int(d.get("seq", -1))
+        L["ts"] = time.monotonic()
+        snap = dict(L)
+    if snap["gps_ok"]:
+        print(f"[{uid:>5}] GPS  lat={snap['lat']:.6f} lon={snap['lon']:.6f}  "
+              f"alt={snap['alt_m']:.1f}m  sats={snap['sats']}  "
+              f"hacc={snap['hacc_m']:.1f}m  seq={snap['seq']}", flush=True)
+    else:
+        print(f"[{uid:>5}] GPS  no-fix  seq={snap['seq']}", flush=True)
     return jsonify(ok=True)
 
 
@@ -142,13 +203,16 @@ def main():
     ap.add_argument("--target", type=float, default=cfg["target_depth"],
                     help="target depth (m)")
     ap.add_argument("--stale-ms", type=int, default=cfg["stale_ms"],
-                    help="a sensor with no packet for this long is 'stale'")
+                    help="an angle sensor with no packet for this long is 'stale'")
+    ap.add_argument("--gps-stale-ms", type=int, default=cfg["gps_stale_ms"],
+                    help="a GNSS fix older than this (ms) is reported gps_ok=false")
     args = ap.parse_args()
     cfg.update(L1=args.l1, L2=args.l2, target_depth=args.target,
-               stale_ms=args.stale_ms)
+               stale_ms=args.stale_ms, gps_stale_ms=args.gps_stale_ms)
 
     print(f"Receiver on :{args.port}  L1={cfg['L1']} L2={cfg['L2']} "
-          f"target={cfg['target_depth']}m  (POST /ingest, GET /status)")
+          f"target={cfg['target_depth']}m  "
+          f"(POST /ingest, POST /location, GET /status)")
     # threaded=True so two ESP32s + /status pollers don't block each other.
     app.run(host=args.host, port=args.port, threaded=True)
 

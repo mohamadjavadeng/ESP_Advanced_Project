@@ -1,0 +1,138 @@
+I want you to continue developing my Raspberry Pi application located at:
+
+`C:\Users\Asus\Documents\GitHub\ESP_Advanced_Project\raspberry_pi\monitoring_control.py`
+
+Please **modify the existing code directly** while preserving the current architecture, coding style, and functionality. Do **not** remove or break any existing features. Integrate the following new functionality.
+
+## 1. RFID Driver Identification
+
+Implement RFID support with the following workflow:
+
+* Continuously monitor the RFID reader for a tag.
+* When a tag is detected:
+
+  1. Connect to GeoMind.
+  2. Download the dataset file named:
+
+     * `Driver_name_database.csv`
+  3. Search the CSV file for the detected RFID UID.
+  4. If the UID exists:
+
+     * Display the corresponding driver's name on the HMI.
+     * Update the appropriate GeoMind feature with:
+
+       * Driver Name
+       * RFID UID
+       * Driver Present = True
+  5. If the UID is not found:
+
+     * Display **Unknown Driver** on the HMI.
+     * Update GeoMind accordingly.
+
+The implementation should gracefully handle:
+
+* Loss of network connection
+* Missing CSV file
+* Invalid CSV format
+* Unknown RFID tags
+
+---
+
+## 2. Person Detection Alarm
+
+Integrate the **latest person detection alarm implementation** that you previously developed.
+
+Requirements:
+
+* Run the person detection continuously.
+* When a person is detected:
+
+  * Trigger an HSE alarm.
+  * Display the alarm immediately on the HMI.
+  * Update the corresponding GeoMind feature.
+  * Display the HSE alarm status on the GeoMind dashboard.
+
+When no person is detected:
+
+* Automatically clear the HSE alarm.
+
+---
+
+## 3. Buzzer Logic
+
+Update the buzzer behavior.
+
+The buzzer should activate whenever **either** of these alarms is active:
+
+* HSE (Person Detection) Alarm
+* Over-Digging Alarm
+
+The buzzer should deactivate only when **both alarms are inactive**.
+
+---
+
+## 4. Dashboard Map Improvements
+
+The current dashboard map needs improvement.
+
+Please:
+
+* Improve the visual appearance of the map.
+* Display the equipment/feature as a marker on the map.
+* Use a realistic fixed location in Oman, preferably somewhere near Muscat.
+* Ensure the feature location updates correctly on the dashboard.
+
+---
+
+## 5. GeoMind Feature Updates
+
+Whenever system data changes, update the GeoMind feature with all relevant information, including:
+
+* Driver Name
+* RFID UID
+* Driver Status
+* HSE Alarm Status
+* Over-Digging Alarm Status
+* Equipment Location
+* Timestamp (if supported)
+
+---
+
+## 6. Driver Operation History Table
+
+Create a table in the GeoMind **Tables** section.
+
+The table should store one record per equipment operation with at least the following fields:
+
+* Driver Name
+* RFID UID
+* Date
+* Start Time
+* End Time (if available)
+* Total Number of Alarms during the operation
+* HSE Alarm Count
+* Over-Digging Alarm Count
+
+The table should automatically insert a new record for each driver session and update the alarm counters during operation.
+
+---
+
+## 7. GeoMind Credentials
+
+Use the following GeoMind credentials:
+
+* Username: `pdo.excavator`
+* Password: `PDO@excavator1`
+
+---
+
+## 8. Code Quality Requirements
+
+* Keep the code modular and readable.
+* Reuse existing classes and functions whenever possible.
+* Add comments for all newly implemented sections.
+* Handle exceptions gracefully.
+* Avoid blocking operations that could freeze the HMI.
+* Ensure all new functionality runs reliably on the Raspberry Pi.
+
+Before making any major architectural changes, first analyze the existing codebase and explain how you plan to integrate each feature. Then implement the modifications incrementally while preserving all existing functionality.

@@ -82,8 +82,8 @@ def detect_people(model, frame, conf):
 
 def main():
     ap = argparse.ArgumentParser(description="EZVIZ H8c RTSP viewer + YOLO person detection")
-    ap.add_argument("--ip", default="192.168.4.7", help="camera IP")
-    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "Aman2026"),
+    ap.add_argument("--ip", default="192.168.100.13", help="camera IP")
+    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "NANXJW"),
                     help="camera RTSP password / verification code "
                          "(or set EZVIZ_CODE env var)")
     ap.add_argument("--sub", action="store_true", help="use sub (low-res) stream")

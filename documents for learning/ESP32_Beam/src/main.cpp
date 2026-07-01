@@ -33,19 +33,21 @@
 // ------------------------------------------------------------------ config ---
 // The field WiFi that the Raspberry Pi is ALSO joined to (a 4G router / phone
 // hotspot, or the Pi's own AP). This is NOT the old "ESP32_Server" SoftAP.
-const char *WIFI_SSID = "A 3";        // 4G modem SSID (note the space)
-const char *WIFI_PASS = "98832988";
+// const char *WIFI_SSID = "A 3";        // 4G modem SSID (note the space)
+// const char *WIFI_PASS = "98832988";
 
+const char *WIFI_SSID = "AMAN 2";        // 4G modem SSID (note the space)
+const char *WIFI_PASS = "AMAN2018";
 // Raspberry Pi address on that WiFi + the receiver endpoint (sensor_receiver.py).
 // Reserve a static lease for the Pi on the router so this never changes.
-const char     *RPI_HOST    = "192.168.0.110";
+const char     *RPI_HOST    = "192.168.100.43";
 const uint16_t  RPI_PORT    = 5000;
 const char     *INGEST_PATH = "/ingest";
 
 // Identity of THIS unit.
 const char *DEVICE_ID = "beam";
 
-const uint32_t POST_INTERVAL_MS = 100;   // telemetry rate (100 ms = 10 Hz)
+const uint32_t POST_INTERVAL_MS = 500;   // telemetry rate (100 ms = 10 Hz)
 #define LED_BUILTIN 2                     // onboard LED: solid when WiFi is up
 
 // ------------------------------------------------------------------- state ---

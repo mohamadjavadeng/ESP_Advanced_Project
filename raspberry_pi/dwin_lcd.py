@@ -229,16 +229,19 @@ class DwinLCD:
         # _build() returns a list of ints; normalise to bytes so .hex() works
         # (and so the dump below matches the wire byte-for-byte).
         raw = bytes(frame)
-        # --- monitoring: decode exactly what is going out to the panel ---
-        cmd = raw[3] if len(raw) > 3 else None
-        addr = ((raw[4] << 8) | raw[5]) if len(raw) > 5 else None
-        data = raw[6:] if len(raw) > 6 else b""
-        cmd_name = {_CMD_WRITE: "WRITE", _CMD_READ: "READ"}.get(cmd, f"0x{cmd:02X}")
-        print(f"[DWIN TX] {raw.hex(' ')}"
-              f"  | len={raw[2] if len(raw) > 2 else '?'}"
-              f" cmd={cmd_name}"
-              f" addr={'0x%04X' % addr if addr is not None else '?'}"
-              f" data=[{data.hex(' ')}]")
+        # Only dump the outgoing frame when debugging -- otherwise this prints on
+        # every depth/target write + every buzzer beep and buries the real
+        # depth/target/alarm log lines. (RX is already gated the same way.)
+        if self.debug:
+            cmd = raw[3] if len(raw) > 3 else None
+            addr = ((raw[4] << 8) | raw[5]) if len(raw) > 5 else None
+            data = raw[6:] if len(raw) > 6 else b""
+            cmd_name = {_CMD_WRITE: "WRITE", _CMD_READ: "READ"}.get(cmd, f"0x{cmd:02X}")
+            print(f"[DWIN TX] {raw.hex(' ')}"
+                  f"  | len={raw[2] if len(raw) > 2 else '?'}"
+                  f" cmd={cmd_name}"
+                  f" addr={'0x%04X' % addr if addr is not None else '?'}"
+                  f" data=[{data.hex(' ')}]")
         n = self._ser.write(raw)
         self._ser.flush()   # block until the bytes are actually clocked out
         if n != len(raw):
