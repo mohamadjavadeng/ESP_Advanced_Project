@@ -132,7 +132,7 @@ class DwinLCD:
         self.port = port
         self.baud = baud
         self.timeout = timeout
-        self.debug = debug   # when True, print every TX/RX frame as hex
+        self.debug = debug   # retained for API compatibility (no longer prints)
         self._lock = threading.RLock()
         self._ser: Optional[serial.Serial] = None
         # RTC fields are populated by read_rtc() (mirrors the Arduino members).
@@ -201,8 +201,6 @@ class DwinLCD:
         if len(body) != length:
             return None
         out = bytes([_HDR0, _HDR1, length]) + body
-        if self.debug:
-            print("RX", out.hex(" "))
         return out
 
     def _read_reply(self, addr: int, timeout: float) -> bytes:
@@ -226,26 +224,10 @@ class DwinLCD:
 
     def _send(self, frame: bytes) -> None:
         """Write a frame (used for 0x82 writes; reads go through _query)."""
-        # _build() returns a list of ints; normalise to bytes so .hex() works
-        # (and so the dump below matches the wire byte-for-byte).
+        # _build() returns a list of ints; normalise to bytes for the wire.
         raw = bytes(frame)
-        # Only dump the outgoing frame when debugging -- otherwise this prints on
-        # every depth/target write + every buzzer beep and buries the real
-        # depth/target/alarm log lines. (RX is already gated the same way.)
-        if self.debug:
-            cmd = raw[3] if len(raw) > 3 else None
-            addr = ((raw[4] << 8) | raw[5]) if len(raw) > 5 else None
-            data = raw[6:] if len(raw) > 6 else b""
-            cmd_name = {_CMD_WRITE: "WRITE", _CMD_READ: "READ"}.get(cmd, f"0x{cmd:02X}")
-            print(f"[DWIN TX] {raw.hex(' ')}"
-                  f"  | len={raw[2] if len(raw) > 2 else '?'}"
-                  f" cmd={cmd_name}"
-                  f" addr={'0x%04X' % addr if addr is not None else '?'}"
-                  f" data=[{data.hex(' ')}]")
-        n = self._ser.write(raw)
+        self._ser.write(raw)
         self._ser.flush()   # block until the bytes are actually clocked out
-        if n != len(raw):
-            print(f"[DWIN TX] WARNING: wrote {n}/{len(raw)} bytes")
 
     def _query(self, addr: int, n_words: int,
                timeout: Optional[float] = None) -> bytes:

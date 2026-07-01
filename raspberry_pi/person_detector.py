@@ -86,12 +86,15 @@ def load_model(cfg, wts, inp):
 
 
 def detect_persons(model, frame, conf, nms):
-    """Return list of (x1, y1, x2, y2, confidence) for detected people."""
+    """Return (persons, n_raw). `persons` is a list of (x1,y1,x2,y2,conf) for the
+    COCO 'person' class; `n_raw` is the TOTAL boxes the model returned for ALL
+    classes. n_raw distinguishes 'model sees nothing' (0) from 'model sees only
+    non-person objects' (>0 with persons empty) -- key for diagnosing detection."""
     class_ids, confidences, boxes = model.detect(
         frame, confThreshold=conf, nmsThreshold=nms)
     out = []
     if len(boxes) == 0:
-        return out
+        return out, 0
     ids = np.array(class_ids).reshape(-1)
     cfs = np.array(confidences).reshape(-1)
     for cid, cf, box in zip(ids, cfs, boxes):
@@ -99,7 +102,7 @@ def detect_persons(model, frame, conf, nms):
             continue
         x, y, w, h = box
         out.append((int(x), int(y), int(x + w), int(y + h), float(cf)))
-    return out
+    return out, int(len(ids))
 
 
 # --------------------------------------------------------------------------- #
@@ -321,6 +324,8 @@ class PersonZoneMonitor:
         last_seen = 0.0      # last time a person was in the zone
         alarmed = False      # has the alarm already fired for this presence
         last_seq = -1
+        frames = 0           # frames processed (for the heartbeat)
+        last_beat = time.time()
 
         try:
             while not stop_event.is_set():
@@ -332,20 +337,30 @@ class PersonZoneMonitor:
                         break
                     continue
                 last_seq = seq
+                frames += 1
 
-                dets = detect_persons(model, frame, self.conf, self.nms)
+                dets, n_raw = detect_persons(model, frame, self.conf, self.nms)
                 in_zone = [d for d in dets
                            if overlap_ratio(d, zone_px) >= self.overlap]
                 now = time.time()
+
+                # First few frames: show the raw model output immediately so you
+                # can confirm the net produces detections (vs. seeing nothing).
+                if frames <= 5:
+                    self.on_log(f"frame {frames}: model raw boxes={n_raw}, "
+                                f"persons={len(dets)}, in-zone={len(in_zone)}")
 
                 if in_zone:
                     last_seen = now
                     if t0 is None:
                         t0 = now
+                        self.on_log(f"person ENTERED zone ({len(in_zone)}, top conf "
+                                    f"{max(d[4] for d in in_zone):.2f}) -- dwell timer started")
                     dwell = now - t0
                     if dwell >= self.dwell and not alarmed:
                         alarmed = True
-                        self.on_log(f"*** HSE ALARM *** person in zone {dwell:.1f}s")
+                        self.on_log(f"*** HSE ALARM *** person in zone {dwell:.1f}s "
+                                    f"(>= {self.dwell:.1f}s)")
                         self._emit(True)
                         self._save_evidence(frame, dets, zone_px, dwell)
                 else:
@@ -356,6 +371,15 @@ class PersonZoneMonitor:
                             self._emit(False)
                         t0 = None
                         alarmed = False
+
+                # Heartbeat every ~10s so the operator can confirm the detector is
+                # alive and SEE what it sees (frames, persons, dwell, alarm state).
+                if now - last_beat >= 10.0:
+                    last_beat = now
+                    self.on_log(f"alive: {frames} frames, raw boxes={n_raw}, "
+                                f"{len(dets)} person(s), {len(in_zone)} in-zone, "
+                                f"dwell={('%.1fs' % (now - t0)) if t0 else '-'}, "
+                                f"alarm={alarmed}")
         finally:
             grab.stop()
             # If we exit while still alarmed, make sure the consumer clears it.

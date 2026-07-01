@@ -42,6 +42,7 @@ Stop with Ctrl-C.
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -273,6 +274,21 @@ def build_url(ip, code, sub):
     return f"rtsp://admin:{code}@{ip}:554/H264/ch1/{channel}/av_stream"
 
 
+def post_hse(url, active):
+    """Optional integration hook: POST {"active": bool} to monitoring_control's
+    /hse endpoint so the excavation controller raises/clears the HSE alarm.
+    No-op when --post-hse is not set."""
+    if not url:
+        return
+    try:
+        body = json.dumps({"active": bool(active)}).encode()
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=1.0).read()
+    except Exception as e:
+        logging.warning("post_hse failed: %s", e)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Person-in-zone intrusion alarm (YOLOv4-tiny / cv2.dnn, Pi 4B)")
@@ -305,6 +321,9 @@ def main():
     ap.add_argument("--wait", type=float, default=4.0, help="seconds between retries")
     ap.add_argument("--duration", type=float, default=0,
                     help="stop after N seconds (0 = run until Ctrl-C; useful for testing)")
+    ap.add_argument("--post-hse", default=None,
+                    help='POST {"active":true/false} to this URL on alarm fire/clear, '
+                         "e.g. http://127.0.0.1:5000/hse to feed monitoring_control.py")
     args = ap.parse_args()
 
     setup_logging(args.logfile)
@@ -383,6 +402,7 @@ def main():
                     logging.critical(
                         "*** ALARM *** person in zone %.1fs (>= %.1fs) — %d person(s)",
                         dwell, args.dwell, len(in_zone))
+                    post_hse(args.post_hse, True)
                     if not args.no_save:
                         save_alarm(frame, dets, zone_px, args.overlap, dwell,
                                    args.alarms_dir)
@@ -394,6 +414,7 @@ def main():
                 if t0 is not None and (now - last_seen) > args.grace:
                     if alarmed:
                         logging.info("zone clear — alarm reset")
+                        post_hse(args.post_hse, False)
                     else:
                         logging.info("left zone before %.1fs dwell — no alarm",
                                      args.dwell)
