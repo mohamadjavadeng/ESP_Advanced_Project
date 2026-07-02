@@ -31,6 +31,12 @@ Model files (auto-downloaded; or pre-fetch on the Pi):
     wget -O models/yolov4-tiny.cfg     https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4-tiny.cfg
     wget -O models/yolov4-tiny.weights https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights
 
+INTEGRATION: this script keeps a TCP link to monitoring_control.py
+(--alarm-host, default 127.0.0.1, port 5050 = its --hse-port) and sends
+newline-JSON alarm edges + the saved evidence picture's path; the controller
+drives the DWIN panel + buzzer and attaches the picture to the GEOMind
+feature. Pass --alarm-host "" to disable the link.
+
 Run (in the venv, headless):
     python3 rpi_person_zone_alarm.py
     python3 rpi_person_zone_alarm.py --zone 0.25,0.3,0.75,0.95   # watch a sub-area
@@ -45,6 +51,7 @@ import argparse
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -250,11 +257,17 @@ def annotate(frame, dets, zone_px, overlap, dwell, alarmed):
 
 
 def save_alarm(frame, dets, zone_px, overlap, dwell, alarms_dir):
+    """Save the annotated alarm snapshot; return its ABSOLUTE path (or None).
+    The path is sent over the alarm link so monitoring_control.py can upload
+    the picture and attach it to the cloud feature."""
     os.makedirs(alarms_dir, exist_ok=True)
     img = annotate(frame, dets, zone_px, overlap, dwell, alarmed=True)
     fn = os.path.join(alarms_dir, time.strftime("alarm_%Y%m%d_%H%M%S.jpg"))
     if cv2.imwrite(fn, img):
+        fn = os.path.abspath(fn)
         logging.info("evidence saved -> %s", fn)
+        return fn
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +300,96 @@ def post_hse(url, active):
         urllib.request.urlopen(req, timeout=1.0).read()
     except Exception as e:
         logging.warning("post_hse failed: %s", e)
+
+
+class AlarmLink:
+    """Persistent TCP link to monitoring_control.py (newline-delimited JSON).
+
+    monitoring_control.py runs an HSE alarm socket server (--hse-port, default
+    5050); this client sends the alarm edges (+ the evidence picture path) and
+    a "ping" every --alarm-ping seconds so the server knows the camera is
+    alive (the server clears the alarm if the link goes silent). Everything is
+    best-effort with ONE silent reconnect per send: a down link must never
+    stall or kill the detection loop. Disabled when host is empty ("").
+
+    Messages sent:
+        {"type": "hello", "who": "rpi_person_zone_alarm"}     on (re)connect
+        {"type": "ping"}                                      keep-alive
+        {"type": "hse", "active": true, "picture": "/abs/alarm_x.jpg", "ts": ..}
+        {"type": "hse", "active": false}
+    """
+
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+        self.sock = None
+        self.lock = threading.Lock()
+
+    def _drop(self):
+        try:
+            if self.sock is not None:
+                self.sock.close()
+        except OSError:
+            pass
+        self.sock = None
+
+    def _alive(self):
+        """True if the socket still looks usable. Detects a server-side close
+        (half-open TCP): without this, the first sendall() after the server
+        dropped us "succeeds" into the void and an ALARM MESSAGE IS LOST."""
+        if self.sock is None:
+            return False
+        try:
+            self.sock.setblocking(False)
+            try:
+                if self.sock.recv(1, socket.MSG_PEEK) == b"":
+                    return False                 # EOF: server closed the link
+            except (BlockingIOError, InterruptedError):
+                pass                             # nothing to read = healthy
+            except OSError:
+                return False
+            return True
+        finally:
+            if self.sock is not None:
+                self.sock.settimeout(3.0)
+
+    def send(self, obj):
+        """Send one JSON message; returns True on success."""
+        if not self.host:
+            return False
+        line = (json.dumps(obj) + "\n").encode()
+        with self.lock:
+            err = None
+            for _ in range(2):                   # 2nd try = fresh connection
+                try:
+                    if self.sock is not None and not self._alive():
+                        self._drop()             # stale socket -> reconnect
+                    if self.sock is None:
+                        self.sock = socket.create_connection(
+                            (self.host, self.port), timeout=3.0)
+                        self.sock.settimeout(3.0)
+                        hello = json.dumps({"type": "hello",
+                                            "who": "rpi_person_zone_alarm"})
+                        self.sock.sendall((hello + "\n").encode())
+                        logging.info("alarm link connected to %s:%d",
+                                     self.host, self.port)
+                    self.sock.sendall(line)
+                    return True
+                except OSError as e:
+                    err = e
+                    self._drop()
+            logging.warning("alarm link send failed: %s", err)
+            return False
+
+    def start_ping(self, interval):
+        """Background keep-alive; also quietly re-establishes a dropped link."""
+        if not self.host or interval <= 0:
+            return
+
+        def _loop():
+            while True:
+                time.sleep(interval)
+                self.send({"type": "ping"})
+        threading.Thread(target=_loop, daemon=True).start()
 
 
 def main():
@@ -324,9 +427,25 @@ def main():
     ap.add_argument("--post-hse", default=None,
                     help='POST {"active":true/false} to this URL on alarm fire/clear, '
                          "e.g. http://127.0.0.1:5000/hse to feed monitoring_control.py")
+    ap.add_argument("--alarm-host", default="127.0.0.1",
+                    help="monitoring_control.py host for the TCP alarm link "
+                         '("" disables); both scripts usually run on the same Pi')
+    ap.add_argument("--alarm-port", type=int, default=5050,
+                    help="monitoring_control.py --hse-port (default 5050)")
+    ap.add_argument("--alarm-ping", type=float, default=10.0,
+                    help="keep-alive ping period for the alarm link, s (0 = off)")
     args = ap.parse_args()
 
     setup_logging(args.logfile)
+
+    # TCP alarm link to monitoring_control.py: alarm edges + evidence picture
+    # path go over this socket; the controller drives the DWIN panel + buzzer
+    # and attaches the picture to the GEOMind cloud feature.
+    link = AlarmLink(args.alarm_host, args.alarm_port)
+    link.start_ping(args.alarm_ping)
+    if args.alarm_host:
+        logging.info("alarm link target: %s:%d (monitoring_control.py --hse-port)",
+                     args.alarm_host, args.alarm_port)
 
     if not args.code:
         logging.error("no verification code. Use --code XXXX or set EZVIZ_CODE.")
@@ -402,10 +521,13 @@ def main():
                     logging.critical(
                         "*** ALARM *** person in zone %.1fs (>= %.1fs) — %d person(s)",
                         dwell, args.dwell, len(in_zone))
-                    post_hse(args.post_hse, True)
+                    pic = None
                     if not args.no_save:
-                        save_alarm(frame, dets, zone_px, args.overlap, dwell,
-                                   args.alarms_dir)
+                        pic = save_alarm(frame, dets, zone_px, args.overlap,
+                                         dwell, args.alarms_dir)
+                    post_hse(args.post_hse, True)
+                    link.send({"type": "hse", "active": True, "picture": pic,
+                               "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
                 elif alarmed and args.remind and now >= next_remind:
                     logging.warning("still present — %.0fs in zone", dwell)
                     next_remind = now + args.remind
@@ -415,6 +537,7 @@ def main():
                     if alarmed:
                         logging.info("zone clear — alarm reset")
                         post_hse(args.post_hse, False)
+                        link.send({"type": "hse", "active": False})
                     else:
                         logging.info("left zone before %.1fs dwell — no alarm",
                                      args.dwell)
@@ -423,6 +546,8 @@ def main():
     except KeyboardInterrupt:
         logging.info("stopping (Ctrl-C)")
     finally:
+        if alarmed:                       # never leave the panel alarm stuck on
+            link.send({"type": "hse", "active": False})
         grab.stop()
 
 

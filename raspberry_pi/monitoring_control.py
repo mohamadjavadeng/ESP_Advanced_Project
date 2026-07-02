@@ -34,10 +34,15 @@ ONE process ties together what used to be separate scripts:
      tag up in a CSV stored on the cloud (--driver-csv) and sets the active
      driver name (shown on the HMI, written to the cloud).
 
-  5. CAMERA HSE ALARM (person_detector.py) -- a YOLOv4-tiny person-in-zone
-     detector thread. When a person dwells in the watch-zone it sets
-     runtime["hse_alarm"]; the HMI mirrors it to the panel + buzzer and the cloud
-     pushes it. It clears automatically when the zone is empty.
+  5. CAMERA HSE ALARM (TCP link) -- person detection runs as the separate,
+     field-proven script ezviz_camera/rpi_person_zone_alarm.py (it owns the
+     camera + YOLO model). That script connects to THIS program over a TCP
+     socket (--hse-port 5050, newline-delimited JSON) and sends the alarm
+     state plus the filename of the saved evidence picture. This program sets
+     runtime["hse_alarm"] (panel VP 0x0402 + buzzer + cloud) and the cloud
+     thread uploads the alarm JPG and ATTACHES it to the status feature.
+     POST /hse stays as a manual fallback. Fail-safe: a camera-client
+     disconnect or 30 s of silence clears the alarm.
 
   6. DRIVER SESSIONS -- the cloud thread opens a row in a <device>_sessions table
      on each driver change, counts HSE / over-dig alarm edges during the session,
@@ -52,7 +57,7 @@ caught and retried, and the last target depth is persisted to the state file so
 the alarm still has a threshold after an offline restart.
 
 Run from the raspberry_pi/ folder (so `import dwin_lcd` resolves):
-    pip install flask pyserial geobox tqdm mfrc522 opencv-python-headless numpy openpyxl
+    pip install flask pyserial geobox tqdm mfrc522 openpyxl
     python3 monitoring_control.py \
         --http-port 8080 --dwin-port /dev/serial0 --dwin-baud 115200 \
         --geomind-host https://app.geo-mind.ai \
@@ -71,6 +76,8 @@ import json
 import logging
 import math
 import os
+import queue
+import socket
 import threading
 import time
 from datetime import datetime, timezone
@@ -96,20 +103,6 @@ except Exception as _e:
     SimpleMFRC522 = None
     _MFRC522_OK, _MFRC522_ERR = False, _e
 
-# Force FFmpeg RTSP over TCP + a socket timeout (same as the standalone camera
-# script) so a stalled stream fails fast instead of hanging. Must be set before
-# the first cv2.VideoCapture is created.
-os.environ.setdefault(
-    "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000")
-
-try:
-    import cv2                                # OpenCV, for the camera person-detector
-    _CV2_OK, _CV2_ERR = True, None
-except Exception as _e:                       # not installed / no display libs
-    cv2 = None
-    _CV2_OK, _CV2_ERR = False, _e
-
-
 # --------------------------------------------------------------- VP address map
 # Page 1 (Pi -> panel)
 VP_DEPTH_TEXT    = 0x0001   # current depth, written as TEXT
@@ -120,7 +113,9 @@ VP_HSE_ALARM     = 0x0402   # HSE/person alarm flag: 1 = alarm, 0 = clear (NEW; 
 
 # Page 2 (panel -> Pi, auto-upload)
 VP_BEAM_LEN  = 0x0012      # beam length, TEXT (mm)
-VP_STICK_LEN = 0x2000      # stick length, TEXT (mm)
+VP_STICK_LEN = 0x0016      # stick length, TEXT (mm) -- 0x0016 in the DGUS
+                           # project + dwin_hmi_app.py (was wrongly 0x2000 here,
+                           # so stick auto-uploads were silently ignored)
 VP_SSID      = 0x0330      # Wi-Fi SSID, TEXT
 VP_PASSWORD  = 0x0350      # Wi-Fi password, TEXT
 SETTINGS_VPS = (VP_BEAM_LEN, VP_STICK_LEN, VP_SSID, VP_PASSWORD)
@@ -173,7 +168,9 @@ runtime = {
     "driver_present": False,         # True once a KNOWN driver is identified
     "over_dig_alarm": False,         # latched (with hysteresis) by the HMI thread
     "sensor_alarm": False,           # a depth sensor is dead/stale
-    "hse_alarm": False,              # set by the camera person-detector thread
+    "hse_alarm": False,              # set by the camera script via the TCP link
+    "hse_picture": "",               # file name of the last alarm evidence JPG
+    "camera_status": "off",          # live camera-link state (GET /status)
     "cloud_ok": False, "hmi_ok": False,
 }
 
@@ -223,6 +220,8 @@ def load_state(path):
 
 def save_state():
     """Persist current geometry/target plus whatever is in _persist (atomically)."""
+    if _state_path is None:          # load_state() not called (tests) -- no-op
+        return
     with _lock:
         _persist["l1"] = cfg["L1"]
         _persist["l2"] = cfg["L2"]
@@ -289,6 +288,8 @@ def build_status():
             "sensor_ok": sensor_ok,
             "sensor_alarm": rt["sensor_alarm"],
             "hse_alarm": rt["hse_alarm"],
+            "hse_picture": rt["hse_picture"],
+            "camera_status": rt["camera_status"],
             "driver_name": rt["driver_name"],
             "rfid_uid": rt["rfid_uid"],
             "driver_present": rt["driver_present"],
@@ -409,17 +410,24 @@ def rfid_inject():
 
 @app.post("/hse")
 def hse_inject():
-    """Set the HSE (person) alarm over HTTP.
+    """Set the HSE (person) alarm over HTTP (manual fallback).
 
-    Fallback for when the in-process camera thread is disabled or a person
-    detector runs on a separate machine: POST {"active": true|false}. The HMI
-    thread mirrors it to the panel + buzzer and the cloud thread pushes it.
+    The primary path is the TCP socket from ezviz_camera/rpi_person_zone_alarm.py
+    (see HseSocketServer); this endpoint remains for testing / other detectors:
+    POST {"active": true|false, "picture": "/abs/path.jpg" (optional)}. A given
+    picture is uploaded + attached to the cloud feature like a socket alarm.
     """
     d = request.get_json(silent=True) or {}
     active = bool(d.get("active", d.get("alarm", False)))
+    picture = str(d.get("picture") or "")
     with _lock:
         runtime["hse_alarm"] = active
-    print(f"[hse] alarm set to {active} via POST /hse", flush=True)
+        if picture:
+            runtime["hse_picture"] = os.path.basename(picture)
+    if active and picture:
+        _attach_q.put((picture, 0))
+    print(f"[hse] alarm set to {active} via POST /hse"
+          f"{'  picture=' + picture if picture else ''}", flush=True)
     return jsonify(ok=True, hse_alarm=active)
 
 
@@ -496,10 +504,24 @@ class HmiController:
             self.cache[addr] = text
             shown = text if addr != VP_PASSWORD else "*" * len(text)
             print(f"[hmi] recv 0x{addr:04X} = '{shown}'", flush=True)
-            # Beam/stick lengths: apply + log + save the instant a NEW value
-            # arrives (no SAVE press needed) and use it for depth from then on.
-            if addr in (VP_BEAM_LEN, VP_STICK_LEN) and text and text != old:
-                self._apply_length(addr, text)
+            # Beam/stick lengths: ALWAYS log the read, then apply + save the
+            # instant a NEW value arrives (no SAVE press needed) and use it for
+            # depth from then on.
+            if addr in (VP_BEAM_LEN, VP_STICK_LEN):
+                which = "BEAM" if addr == VP_BEAM_LEN else "STICK"
+                print(f"[hmi] {which} LENGTH read from HMI: '{text}' mm", flush=True)
+                if text and text != old:
+                    self._apply_length(addr, text)
+                elif text:
+                    print(f"[hmi] {which.lower()} length unchanged "
+                          f"({text} mm) -- already applied", flush=True)
+            return
+        # Any other 0x83 frame reaching here is a VP this program does not know.
+        # Log it loudly: if the DGUS project uploads beam/stick/save on a
+        # different VP than expected, THIS line is how you find out.
+        data = event_bytes(ev)
+        print(f"[hmi] recv UNHANDLED VP 0x{addr:04X} value=0x{val:04X} "
+              f"data={data.hex()} text='{decode_text(data)}'", flush=True)
 
     def _apply_length(self, addr, text):
         """Apply a beam/stick length pushed from the HMI: log the new value,
@@ -654,7 +676,8 @@ class CloudSync:
         ("target_depth", "Float"), ("current_depth", "Float"), ("driver", "String"),
         ("rfid_uid", "String"), ("driver_present", "Integer"),
         ("over_dig_alarm", "Integer"), ("sensor_alarm", "Integer"),
-        ("hse_alarm", "Integer"), ("updated_at", "String"),
+        ("hse_alarm", "Integer"), ("last_alarm_picture", "String"),
+        ("updated_at", "String"),
     ]
     TABLE_FIELDS = [
         ("ts", "String"), ("driver", "String"), ("depth", "Float"),
@@ -761,7 +784,8 @@ class CloudSync:
                 "properties": {"target_depth": tgt, "current_depth": 0.0,
                                "driver": name, "rfid_uid": "", "driver_present": 0,
                                "over_dig_alarm": 0, "sensor_alarm": 0,
-                               "hse_alarm": 0, "updated_at": _now_iso()},
+                               "hse_alarm": 0, "last_alarm_picture": "",
+                               "updated_at": _now_iso()},
             }, srid=4326)
         try:
             self.feature_id = feature.id
@@ -848,16 +872,51 @@ class CloudSync:
                      driver_present=int(rt["driver_present"]),
                      over_dig_alarm=int(rt["over_dig_alarm"]),
                      sensor_alarm=int(rt["sensor_alarm"]),
-                     hse_alarm=int(rt["hse_alarm"]), updated_at=_now_iso())
+                     hse_alarm=int(rt["hse_alarm"]),
+                     last_alarm_picture=rt["hse_picture"],
+                     updated_at=_now_iso())
         geom = feature.data.setdefault("geometry", {"type": "Point", "coordinates": [0, 0]})
         geom["coordinates"] = [lon, lat]
         feature.save()
 
-        # 3) driver-session history: open/close sessions + count alarm events
+        # 3) upload + attach any queued HSE alarm pictures to the feature
+        self._attach_pictures(feature)
+
+        # 4) driver-session history: open/close sessions + count alarm events
         self._update_session(rt)
 
-        # 4) log a table row ONLY on a driver change or an alarm edge
+        # 5) log a table row ONLY on a driver change or an alarm edge
         self._maybe_log(st, rt, lat, lon, target)
+
+    def _attach_pictures(self, feature):
+        """Upload queued HSE-alarm evidence JPGs (sent over the camera TCP link)
+        and attach each to the status feature, so the alarm picture is visible
+        on the cloud object. A failed picture is retried on later cycles, up to
+        3 attempts, then dropped with a log."""
+        while True:
+            try:
+                path, tries = _attach_q.get_nowait()
+            except queue.Empty:
+                return
+            name = os.path.basename(path)
+            try:
+                if not os.path.exists(path):
+                    print(f"[cloud] alarm picture not found: {path} -- skipped "
+                          f"(the camera script must run on THIS machine)", flush=True)
+                    continue
+                fobj = self.client.upload_file(path=path, scan_archive=False)
+                self.layer.create_attachment(
+                    name=os.path.splitext(name)[0], loc_x=0, loc_y=0,
+                    file=fobj, feature=feature, display_name=name,
+                    description=f"HSE person-in-zone alarm evidence ({_now_iso()})")
+                print(f"[cloud] alarm picture attached to feature: {name}", flush=True)
+            except Exception as e:
+                if tries + 1 < 3:
+                    _attach_q.put((path, tries + 1))
+                    print(f"[cloud] picture attach failed ({e}); will retry", flush=True)
+                else:
+                    print(f"[cloud] picture attach failed 3x ({e}); dropped: {name}",
+                          flush=True)
 
     def _maybe_log(self, st, rt, lat, lon, target):
         # Log a row ONLY on a change: a new driver, an alarm turning ON (a new
@@ -1258,75 +1317,125 @@ class RfidReader:
                 pass
 
 
-# ============================================================ camera / HSE ====
-class CameraDetector:
-    """Runs the YOLOv4-tiny person-in-zone detector (person_detector.py) on a
-    background thread and mirrors its alarm EDGES into runtime["hse_alarm"].
+# ==================================================== camera HSE link (TCP) ===
+# The person detector is NOT in this process any more: the field-proven
+# standalone script ezviz_camera/rpi_person_zone_alarm.py owns the camera and
+# the YOLO model. It connects to THIS program over a TCP socket (--hse-port)
+# and pushes newline-delimited JSON messages:
+#     {"type": "hello", "who": "rpi_person_zone_alarm"}
+#     {"type": "ping"}                                        (every ~10 s)
+#     {"type": "hse", "active": true, "picture": "/abs/path/alarm_x.jpg"}
+#     {"type": "hse", "active": false}
+# On "hse" the server sets runtime["hse_alarm"] (the HMI thread mirrors it to
+# panel VP 0x0402 + buzzer, the cloud thread pushes it) and, when a picture
+# path is included, queues the JPG so the cloud thread uploads it and attaches
+# it to the status feature. POST /hse stays as a manual fallback.
 
-    Like the cloud/RFID threads it never touches the serial port -- the HMI
-    thread reads runtime["hse_alarm"] and drives the panel VP + buzzer. If
-    OpenCV is missing or the RTSP stream can't be opened it logs and exits the
-    thread; the rest of the system keeps running and POST /hse still works.
+# Alarm-evidence JPGs waiting to be uploaded + attached by the cloud thread.
+# Items are (path, tries) tuples.
+_attach_q = queue.Queue()
+
+
+def _set_camera_status(text):
+    """Publish the camera-link state (shown in GET /status as camera_status)
+    and log it -- so 'person detection not working' is diagnosable remotely."""
+    with _lock:
+        runtime["camera_status"] = text
+    print(f"[hse-link] {text}", flush=True)
+
+
+class HseSocketServer:
+    """TCP server for the camera script's alarm link (one client at a time).
+
+    Fail-safe like the old in-process detector: a client disconnect or
+    --hse-link-timeout seconds of silence (the client pings every ~10 s)
+    clears the HSE alarm, so a dead camera process can never leave the panel
+    alarm + buzzer stuck on.
     """
 
     def __init__(self, args):
         self.args = args
 
-    def _on_change(self, active):
-        """Called by the detector on each alarm edge (True raised / False clear)."""
-        with _lock:
-            runtime["hse_alarm"] = bool(active)
-        print(f"[camera] HSE alarm {'RAISED' if active else 'cleared'}", flush=True)
-
-    @staticmethod
-    def _log(msg):
-        print(f"[camera] {msg}", flush=True)
-
-    def run(self):
-        if not _CV2_OK:
-            print(f"[camera] OpenCV unavailable ({_CV2_ERR}); person detection "
-                  f"disabled -- use POST /hse to set the HSE alarm", flush=True)
-            return
+    def _handle_line(self, line, addr):
         try:
-            from person_detector import PersonZoneMonitor, build_rtsp_url, parse_zone
-        except Exception as e:
-            print(f"[camera] person_detector import failed ({e}); disabled", flush=True)
+            msg = json.loads(line)
+        except ValueError:
+            print(f"[hse-link] bad JSON from {addr}: {line[:120]!r}", flush=True)
             return
-        try:
-            zone = parse_zone(self.args.zone)
-        except Exception as e:
-            print(f"[camera] bad --zone ({e}); watching the whole frame", flush=True)
-            zone = (0.0, 0.0, 1.0, 1.0)
-        url = build_rtsp_url(self.args.camera_ip, self.args.camera_code,
-                             sub=not self.args.camera_main)
-        print(f"[camera] starting person detector: cam={self.args.camera_ip} "
-              f"stream={'main' if self.args.camera_main else 'sub'} zone={zone} "
-              f"dwell={self.args.dwell}s conf={self.args.conf} "
-              f"models={self.args.models_dir}", flush=True)
-        print(f"[camera] opening {url.replace(self.args.camera_code, '******')}",
-              flush=True)
-        monitor = PersonZoneMonitor(
-            url, zone=zone, dwell=self.args.dwell, conf=self.args.conf,
-            nms=self.args.nms, overlap=self.args.overlap, grace=self.args.grace,
-            input_size=self.args.yolo_input, models_dir=self.args.models_dir,
-            on_change=self._on_change, on_log=self._log,
-            save_dir=self.args.camera_save_dir)
-        # Restart the whole detector loop if the stream dies, until shutdown.
-        import traceback
+        mtype = msg.get("type")
+        if mtype == "hello":
+            print(f"[hse-link] client hello: {msg.get('who', '?')} from {addr}",
+                  flush=True)
+        elif mtype == "hse":
+            active = bool(msg.get("active"))
+            picture = str(msg.get("picture") or "")
+            with _lock:
+                runtime["hse_alarm"] = active
+                if picture:
+                    runtime["hse_picture"] = os.path.basename(picture)
+            if active and picture:
+                _attach_q.put((picture, 0))
+            print(f"[hse-link] HSE alarm {'RAISED' if active else 'cleared'}"
+                  f"{'  picture=' + picture if picture else ''}", flush=True)
+            _set_camera_status("ALARM: person in zone" if active
+                               else "armed (camera link up)")
+        elif mtype != "ping":                    # pings just reset the timeout
+            print(f"[hse-link] unknown message type {mtype!r}", flush=True)
+
+    def _serve_client(self, conn, addr):
+        conn.settimeout(self.args.hse_link_timeout)
+        _set_camera_status(f"armed (camera client {addr} connected)")
+        buf = b""
         while not _stop.is_set():
             try:
-                monitor.run(_stop)
-                break                          # clean stop (stop_event was set)
-            except Exception as e:
-                with _lock:
-                    runtime["hse_alarm"] = False   # fail safe: never leave it stuck on
-                print(f"[camera] detector error: {e}", flush=True)
-                traceback.print_exc()
-                print("[camera] retrying in 10s -- if the standalone camera script "
-                      "is also connected, disconnect it (the camera may allow only "
-                      "one RTSP client)", flush=True)
-                if _stop.wait(10):
-                    break
+                chunk = conn.recv(4096)
+            except socket.timeout:
+                print(f"[hse-link] no message for "
+                      f"{self.args.hse_link_timeout:.0f}s -- dropping client",
+                      flush=True)
+                return
+            except OSError:
+                return
+            if not chunk:                        # client closed the connection
+                return
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if line.strip():
+                    self._handle_line(line.decode("utf-8", "replace"), addr)
+
+    def run(self):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            srv.bind((self.args.hse_host, self.args.hse_port))
+        except OSError as e:
+            _set_camera_status(f"DISABLED: cannot bind "
+                               f"{self.args.hse_host}:{self.args.hse_port} ({e})")
+            return
+        srv.listen(1)
+        srv.settimeout(1.0)                      # so _stop is honoured promptly
+        _set_camera_status(f"waiting for camera client on "
+                           f"{self.args.hse_host}:{self.args.hse_port} "
+                           f"(run ezviz_camera/rpi_person_zone_alarm.py)")
+        while not _stop.is_set():
+            try:
+                conn, addr = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError as e:
+                print(f"[hse-link] accept error: {e}", flush=True)
+                continue
+            with conn:
+                self._serve_client(conn, f"{addr[0]}:{addr[1]}")
+            # Client gone: fail safe -- never leave the alarm stuck on.
+            with _lock:
+                was = runtime["hse_alarm"]
+                runtime["hse_alarm"] = False
+            _set_camera_status("camera client disconnected"
+                               + (" -- HSE alarm cleared" if was else "")
+                               + "; waiting for reconnect")
+        srv.close()
 
 
 # ===================================================================== main ===
@@ -1389,32 +1498,15 @@ def main():
                     help="fallback latitude for the map marker (default: Muscat, Oman)")
     ap.add_argument("--home-lon", type=float, default=58.4059,
                     help="fallback longitude for the map marker (default: Muscat, Oman)")
-    # camera / person detection -> HSE alarm
-    ap.add_argument("--camera-ip", default="192.168.100.13", help="EZVIZ camera IP")
-    ap.add_argument("--camera-code", default=os.environ.get("EZVIZ_CODE", "NANXJW"),
-                    help="camera RTSP verification code (or set EZVIZ_CODE)")
-    ap.add_argument("--camera-main", action="store_true",
-                    help="use the main (HD) stream; default sub (lighter on the Pi)")
-    ap.add_argument("--zone", default="0,0,1,1",
-                    help="person watch-zone x1,y1,x2,y2 as fractions 0..1")
-    ap.add_argument("--dwell", type=float, default=3.0,
-                    help="seconds a person must stay in zone before the HSE alarm")
-    ap.add_argument("--conf", type=float, default=0.50, help="YOLO confidence 0..1")
-    ap.add_argument("--nms", type=float, default=0.40, help="YOLO NMS IoU threshold")
-    ap.add_argument("--overlap", type=float, default=0.30,
-                    help="min box-in-zone overlap fraction to count as inside")
-    ap.add_argument("--grace", type=float, default=1.0,
-                    help="seconds of absence tolerated before the dwell timer resets")
-    ap.add_argument("--yolo-input", type=int, default=416,
-                    help="YOLO input size (320 faster, 416 default, 608 more accurate)")
-    ap.add_argument("--models-dir",
-                    default=os.path.join(os.path.dirname(os.path.dirname(
-                        os.path.abspath(__file__))), "ezviz_camera", "models"),
-                    help="directory holding yolov4-tiny.cfg/.weights")
-    ap.add_argument("--camera-save-dir", default=None,
-                    help="if set, save an annotated JPG when the HSE alarm fires")
-    ap.add_argument("--no-camera", action="store_true",
-                    help="disable the in-process person detector (POST /hse still works)")
+    # camera HSE alarm link (TCP socket from ezviz_camera/rpi_person_zone_alarm.py)
+    ap.add_argument("--hse-host", default="0.0.0.0",
+                    help="interface the HSE alarm socket server listens on")
+    ap.add_argument("--hse-port", type=int, default=5050,
+                    help="TCP port for the camera script's alarm link "
+                         "(rpi_person_zone_alarm.py --alarm-port must match)")
+    ap.add_argument("--hse-link-timeout", type=float, default=30.0,
+                    help="drop the camera client after this many s of silence "
+                         "(the client pings every ~10 s)")
     # state file
     ap.add_argument("--state-file", default=default_state_path())
     args = ap.parse_args()
@@ -1452,13 +1544,9 @@ def main():
     else:
         threads.append(threading.Thread(target=RfidReader(args, DIRECTORY).run,
                                         name="rfid", daemon=True))
-    if args.no_camera:
-        print("[main] camera disabled (--no-camera); POST /hse still works", flush=True)
-    elif not _CV2_OK:
-        print(f"[warn] OpenCV not importable ({_CV2_ERR}); camera disabled", flush=True)
-    else:
-        threads.append(threading.Thread(target=CameraDetector(args).run,
-                                        name="camera", daemon=True))
+    # HSE alarm link: the standalone camera script connects here (TCP).
+    threads.append(threading.Thread(target=HseSocketServer(args).run,
+                                    name="hse-link", daemon=True))
 
     for t in threads:
         t.start()
