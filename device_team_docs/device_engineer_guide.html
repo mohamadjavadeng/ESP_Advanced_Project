@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDO AI Hazard Detection — Device Integration Guide</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Inter, system-ui, sans-serif; background: #f4f7fa; color: #1c2733; line-height: 1.55; }
+  .page { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.doc { background: linear-gradient(120deg, #00331a, #00843d); color: #fff; border-radius: 14px; padding: 28px 32px; margin-bottom: 28px; }
+  header.doc h1 { font-size: 26px; letter-spacing: .3px; }
+  header.doc p { opacity: .92; margin-top: 6px; font-size: 14.5px; }
+  h2 { font-size: 19px; margin: 34px 0 12px; color: #00522a; border-bottom: 2px solid #d7e6dd; padding-bottom: 6px; }
+  h3 { font-size: 15.5px; margin: 18px 0 8px; }
+  p, li { font-size: 14.5px; }
+  ul, ol { margin: 8px 0 8px 22px; }
+  .card { background: #fff; border: 1px solid #e2e9ef; border-radius: 12px; padding: 18px 20px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .callout { border-left: 5px solid #00843d; background: #eef7f1; }
+  .warn { border-left: 5px solid #da291c; background: #fdf0ef; }
+  .note { border-left: 5px solid #f5a800; background: #fdf8ec; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13.5px; background: #fff; }
+  th { background: #eaf2ee; text-align: left; padding: 8px 10px; border: 1px solid #d8e2dc; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; }
+  td { padding: 7px 10px; border: 1px solid #e4eae6; vertical-align: top; }
+  code { background: #eef2f6; border: 1px solid #dde4ea; border-radius: 4px; padding: 1px 5px; font-family: Consolas, "JetBrains Mono", monospace; font-size: 12.8px; }
+  pre { background: #10202b; color: #d8e8f2; border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 12.8px; font-family: Consolas, monospace; margin: 10px 0; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0 4px; font-size: 13px; }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .lg-dev::before { background: #ff7a1a; } .lg-gm::before { background: #0e8f83; } .lg-us::before { background: #00843d; }
+  .step { display: flex; gap: 14px; margin: 12px 0; }
+  .step .n { flex: 0 0 34px; height: 34px; border-radius: 50%; background: #00843d; color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .kv { color: #5a6b7a; font-size: 12.5px; }
+  .svgwrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="doc">
+  <h1>PDO AI Hazard Detection — Device Integration &amp; Live-Test Guide</h1>
+  <p>For the excavator device engineer · How your Raspberry-Pi controller feeds the GeoMind cloud, the fleet dashboards and the new web app — and exactly what we need from you for the live test.</p>
+</header>
+
+<h2>1 · The big picture</h2>
+<p>Your device is already the <b>first real machine (EXC-01)</b> in a live fleet-monitoring system. Everything you write to GeoMind flows automatically into two dashboard surfaces: the GeoMind portal dashboards and a new standalone web app. <b>Your firmware needs no functional changes</b> — it already speaks the right contract.</p>
+
+<div class="legend"><span class="lg-dev">Your side (device)</span><span class="lg-gm">GeoMind cloud (shared account)</span><span class="lg-us">Our side (bridge + web app)</span></div>
+
+<div class="card svgwrap">
+<svg viewBox="0 0 940 330" width="100%" style="min-width:820px" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5a6b7a"/>
+    </marker>
+  </defs>
+  <!-- device -->
+  <rect x="10" y="90" width="185" height="150" rx="12" fill="#fff3e8" stroke="#ff7a1a" stroke-width="2"/>
+  <text x="102" y="115" text-anchor="middle" font-size="13" font-weight="700" fill="#a34d0e">EXCAVATOR DEVICE</text>
+  <text x="102" y="136" text-anchor="middle" font-size="11" fill="#5a6b7a">Raspberry Pi hub</text>
+  <text x="20" y="160" font-size="11" fill="#333">• 2× ESP32 tilt → depth</text>
+  <text x="20" y="178" font-size="11" fill="#333">• EZVIZ cam → YOLO person</text>
+  <text x="20" y="196" font-size="11" fill="#333">• RFID driver sessions</text>
+  <text x="20" y="214" font-size="11" fill="#333">• monitoring_control.py</text>
+  <text x="102" y="232" text-anchor="middle" font-size="10.5" fill="#a34d0e">sync every ~5 s</text>
+  <!-- geomind -->
+  <rect x="255" y="30" width="240" height="270" rx="12" fill="#e8f5f3" stroke="#0e8f83" stroke-width="2"/>
+  <text x="375" y="55" text-anchor="middle" font-size="13" font-weight="700" fill="#0b6459">GEOMIND CLOUD</text>
+  <text x="375" y="72" text-anchor="middle" font-size="10.5" fill="#5a6b7a">app.geo-mind.ai · account pdo.excavator</text>
+  <rect x="270" y="84" width="210" height="52" rx="7" fill="#fff" stroke="#ff7a1a" stroke-width="1.6"/>
+  <text x="375" y="104" text-anchor="middle" font-size="11.5" font-weight="600">excavator1_status  #66534</text>
+  <text x="375" y="122" text-anchor="middle" font-size="10.5" fill="#5a6b7a">1 feature = live state (yours)</text>
+  <rect x="270" y="142" width="210" height="40" rx="7" fill="#fff" stroke="#ff7a1a" stroke-width="1.6"/>
+  <text x="375" y="159" text-anchor="middle" font-size="11.5" font-weight="600">excavator1_log · _sessions</text>
+  <text x="375" y="175" text-anchor="middle" font-size="10.5" fill="#5a6b7a">history tables (yours)</text>
+  <rect x="270" y="188" width="210" height="40" rx="7" fill="#fff" stroke="#ff7a1a" stroke-width="1.6"/>
+  <text x="375" y="205" text-anchor="middle" font-size="11.5" font-weight="600">alarm_*.jpg files</text>
+  <text x="375" y="221" text-anchor="middle" font-size="10.5" fill="#5a6b7a">HSE photos, attached (yours)</text>
+  <rect x="270" y="234" width="210" height="52" rx="7" fill="#fff" stroke="#00843d" stroke-width="1.6"/>
+  <text x="375" y="253" text-anchor="middle" font-size="11.5" font-weight="600">pdo_fleet · pdo_fleet_log …</text>
+  <text x="375" y="270" text-anchor="middle" font-size="10.5" fill="#5a6b7a">fleet-wide layers (ours)</text>
+  <!-- bridge -->
+  <rect x="555" y="120" width="165" height="90" rx="12" fill="#eef7f1" stroke="#00843d" stroke-width="2"/>
+  <text x="637" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#00522a">BRIDGE</text>
+  <text x="637" y="166" text-anchor="middle" font-size="10.5" fill="#333">mirrors EXC-01 into the</text>
+  <text x="637" y="181" text-anchor="middle" font-size="10.5" fill="#333">fleet every 20 s tick</text>
+  <text x="637" y="199" text-anchor="middle" font-size="10.5" fill="#5a6b7a">(we run it)</text>
+  <!-- webapp -->
+  <rect x="770" y="55" width="160" height="220" rx="12" fill="#eef7f1" stroke="#00843d" stroke-width="2"/>
+  <text x="850" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="#00522a">WEB APP</text>
+  <text x="850" y="100" text-anchor="middle" font-size="10.5" fill="#5a6b7a">http://…:8010</text>
+  <text x="780" y="126" font-size="11" fill="#333">• Command Center</text>
+  <text x="780" y="144" font-size="11" fill="#333">• Machine Inspector</text>
+  <text x="780" y="162" font-size="11" fill="#333">• Fleet Health · Map</text>
+  <text x="780" y="184" font-size="11" fill="#333">• Your photos + gauges</text>
+  <text x="780" y="202" font-size="11" fill="#333">• GeoMind dashboards</text>
+  <text x="780" y="220" font-size="11" fill="#333">  stay in the portal too</text>
+  <text x="850" y="252" text-anchor="middle" font-size="10.5" fill="#5a6b7a">UI polls every 6–10 s</text>
+  <!-- arrows -->
+  <line x1="195" y1="150" x2="266" y2="120" stroke="#5a6b7a" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="195" y1="185" x2="266" y2="200" stroke="#5a6b7a" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="495" y1="140" x2="551" y2="155" stroke="#5a6b7a" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="555" y1="185" x2="500" y2="250" stroke="#5a6b7a" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="720" y1="160" x2="766" y2="160" stroke="#5a6b7a" stroke-width="2" marker-end="url(#a)"/>
+  <text x="737" y="150" font-size="9.5" fill="#5a6b7a">reads</text>
+</svg>
+</div>
+
+<h2>2 · Nothing changes in your data contract</h2>
+<div class="card callout">
+<p><b>Keep writing exactly what you write today.</b> The system consumes your three resources as-is:</p>
+<ul>
+<li><code>excavator1_status</code> (vector layer #66534, one Point feature): <code>current_depth, target_depth, driver, rfid_uid, driver_present, over_dig_alarm, sensor_alarm, hse_alarm, last_alarm_picture, updated_at</code> — updated by your <code>CloudSync</code> every ~5 s. Keep reading <code>target_depth</code> back before writing (operators edit it in the portal; that loop is used in demos).</li>
+<li><code>excavator1_log</code> (table): change-only rows with your event enum <code>init | over_dig_on/off | sensor_alarm_on/off | hse_on/off | driver_change</code>.</li>
+<li><code>excavator1_sessions</code> (table): one row per RFID driver session with alarm counters.</li>
+<li>HSE photos: keep uploading <code>alarm_YYYYMMDD_HHMMSS.jpg</code> and attaching to the status feature — they now appear automatically in the web app's EXC-01 gallery (newest six, "DEVICE UPLOAD" badge) and in map popups.</li>
+</ul>
+</div>
+
+<h2>3 · What we need from you (3 items)</h2>
+<div class="card warn">
+<div class="step"><div class="n">1</div><div>
+<h3>Switch device auth from password to the API key</h3>
+<p>The account allows <b>one password session at a time</b>. Every time your device logs in with username/password it kicks whoever is using the GeoMind portal (and vice-versa — a human login can kill your device's session mid-run: <code>Session has been revoked</code>). An API key is session-less and immune.</p>
+<p>A key named <b><code>pdo_device_service</code></b> is already created for you. <b>Its value is NOT in this document — ask Hamed for it</b> and keep it out of git.</p>
+<pre># monitoring_control.py — replace the password client with:
+client = GeoboxClient(host="https://app.geo-mind.ai",
+                      apikey=DEVICE_APIKEY,      # from env, not hardcoded
+                      verify=False)
+# raw requests (photo upload/download etc.): append ?apikey=&lt;key&gt;
+# your geobox_token.py already supports apikey mode — same pattern.</pre>
+<p class="kv">Everything else (feature.save, create_row, upload_file, create_attachment) works unchanged with the apikey client — verified on this tenant.</p>
+</div></div>
+<div class="step"><div class="n">2</div><div>
+<h3>Keep resource names <code>excavator1_*</code></h3>
+<p>The bridge and dashboards find your data by these names. If you provision fresh (your <code>monitoring_state.json</code> lost), let your code re-create the same names — UUIDs may change, names must not.</p>
+</div></div>
+<div class="step"><div class="n">3</div><div>
+<h3>Agree a test window with Hamed</h3>
+<p>During the test we run the bridge on our side (<code>live_sim.py --bridge-only</code> — mirrors ONLY your real device into the fleet, no simulated machines polluting your data). Outside agreed windows the full simulator may be running, which also bridges you but adds 17 fake machines around you.</p>
+</div></div>
+</div>
+
+<h2>4 · Timing — what latency to expect</h2>
+<div class="card svgwrap">
+<svg viewBox="0 0 900 170" width="100%" style="min-width:760px" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, sans-serif">
+  <text x="10" y="20" font-size="12.5" font-weight="700" fill="#1c2733">Bucket moves → number changes on screen (worst case ≈ 30 s)</text>
+  <rect x="10" y="40" width="150" height="26" rx="6" fill="#ff7a1a"/>
+  <text x="85" y="57" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="600">device sync ≤ 5 s</text>
+  <rect x="164" y="40" width="330" height="26" rx="6" fill="#0e8f83"/>
+  <text x="329" y="57" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="600">bridge tick ≤ 20 s (copies status + new log rows)</text>
+  <rect x="498" y="40" width="150" height="26" rx="6" fill="#00843d"/>
+  <text x="573" y="57" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="600">web app poll ≤ 6 s</text>
+  <text x="660" y="58" font-size="12" fill="#1c2733">→ gauge moves</text>
+  <text x="10" y="95" font-size="12" fill="#5a6b7a">• Portal "Live Machine Panel" gauges read your status layer directly — they update ≤ 5 s + 8 s query timer, independent of the bridge.</text>
+  <text x="10" y="115" font-size="12" fill="#5a6b7a">• Log/session rows appear in tables on the next bridge tick + table refresh.</text>
+  <text x="10" y="135" font-size="12" fill="#5a6b7a">• Map DOTS lag ~10 s extra (vector-tile cache reseed each bridge tick) — popups/tables are always fresher than dots.</text>
+  <text x="10" y="155" font-size="12" fill="#5a6b7a">• Photos: attach → visible in web-app gallery on next Inspector refresh (≤ 6 s).</text>
+</svg>
+</div>
+
+<h2>5 · Joint test procedure</h2>
+<div class="card">
+<table>
+<tr><th style="width:36px">#</th><th style="width:42%">You do</th><th>We see (and where)</th></tr>
+<tr><td>1</td><td>Power the device; confirm your console shows cloud sync OK.</td><td><code>excavator1_status.updated_at</code> goes fresh; Command Center "EXC-01 last seen" ticks.</td></tr>
+<tr><td>2</td><td>— (Hamed starts the bridge: <code>live_sim.py --bridge-only --minutes 60</code>)</td><td>EXC-01 row in <code>pdo_fleet</code> mirrors your device each 20 s.</td></tr>
+<tr><td>3</td><td>Move the boom/stick through a dig cycle.</td><td>Web app → Machine Inspector → EXC-01: bucket-depth gauge + depth-history chart follow within ~30 s.</td></tr>
+<tr><td>4</td><td>Badge a different RFID card.</td><td>Operator name changes; <code>driver_change</code> row in the device log table; closed session row appears.</td></tr>
+<tr><td>5</td><td>Walk into the camera zone and stay ≥ 3 s (your dwell time).</td><td>HSE lamp trips; <code>hse_on</code> log row; your alarm photo shows in the EXC-01 gallery ("DEVICE UPLOAD") and in the map popup.</td></tr>
+<tr><td>6</td><td>Clear the zone.</td><td><code>hse_off</code> row; lamp back to OK.</td></tr>
+<tr><td>7</td><td>— (Hamed edits <code>target_depth</code> on the feature in the portal)</td><td>Your cab display picks up the new target ≤ 5 s; our "permitted" gauge needle moves too. Bidirectional loop proven.</td></tr>
+</table>
+</div>
+
+<h2>6 · Troubleshooting</h2>
+<div class="card">
+<table>
+<tr><th style="width:38%">Symptom</th><th>Cause / fix</th></tr>
+<tr><td><code>AuthenticationError: Session has been revoked</code> on the device</td><td>You're still on password auth and someone logged into the portal. Switch to the API key (§3.1).</td></tr>
+<tr><td>Portal shows "Session Terminated" for Hamed while device runs</td><td>Same root cause, other direction. API key fixes both.</td></tr>
+<tr><td><code>updated_at</code> fresh but web app EXC-01 stale</td><td>Bridge not running. Ask Hamed to start it (it's our side).</td></tr>
+<tr><td>Photo uploaded but not in the gallery</td><td>Gallery shows the newest 6 attachments of the status feature; check the attachment succeeded (<code>create_attachment</code> return) and the filename starts with <code>alarm_</code>.</td></tr>
+<tr><td>Map dot doesn't move though popup data is fresh</td><td>Normal: dots come from a tile cache reseeded each bridge tick (~10 s extra). Popups/tables are authoritative.</td></tr>
+<tr><td>Feature write fails with <code>KeyError: 'geometry'</code></td><td>The SDK's <code>feature.update</code> requires geometry — send the full Feature payload with <code>srid=4326</code> (your CloudSync already does).</td></tr>
+</table>
+</div>
+
+<h2>7 · Reference — quick endpoints (all with <code>?apikey=</code>)</h2>
+<div class="card note">
+<pre>Feature read : GET  /v1/vectorLayers/&lt;uuid&gt;/features/?limit=5&amp;out_srid=4326
+Table rows   : GET  /v1/tables/&lt;uuid&gt;/rows/?skip=0&amp;limit=100     (page/order_by can 500 — use skip/limit)
+File download: GET  /v1/files/&lt;uuid&gt;/download/
+Attachments  : GET  /v1/attachments/?resource_type=vector&amp;resource_uuid=&lt;layer&gt;   (both params REQUIRED)</pre>
+<p class="kv">Full API contract, schemas and code snippets for your Claude agent: see the companion file <b>claude_agent_onboarding.html</b>.</p>
+</div>
+
+<p class="kv" style="margin-top:26px">Prepared by AMAN · GeoMind — PDO AI Hazard Detection project. Questions → Hamed (hamed@aman.om).</p>
+</div>
+</body>
+</html>

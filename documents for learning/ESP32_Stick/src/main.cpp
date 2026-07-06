@@ -4,8 +4,8 @@
  * Hardware: LilyGO T-SIM7000G (ESP32-WROVER + SIM7000G LTE/GNSS, 4 MB flash).
  *
  * Dual-core split (FreeRTOS, pinned tasks):
- *   - Core 1 (APP_CPU)  angleTask : MPU6050 DMP roll  -> POST /ingest   @ 10 Hz
- *   - Core 0 (PRO_CPU)  gpsTask   : SIM7000G GNSS fix  -> POST /location @ 5 min
+ *   - Core 1 (APP_CPU)  angleTask : MPU6050 DMP roll (EMA-filtered) -> POST /ingest @ 1 Hz
+ *   - Core 0 (PRO_CPU)  gpsTask   : SIM7000G GNSS fix  -> POST /location (5 s until first fix, then 5 min)
  *
  * Transport for BOTH streams is the field WiFi (the site's 4G router that the
  * Raspberry Pi is also on). The SIM7000G is used ONLY as a GNSS receiver -- no
@@ -15,7 +15,7 @@
  * two-core reconnect race.
  *
  * The Raspberry Pi still owns ALL calibration + geometry and computes depth;
- * this firmware sends RAW degrees + RAW lat/lon only.
+ * this firmware sends smoothed (uncalibrated) degrees + RAW lat/lon only.
  *
  * NOTE: the Pi's sensor_receiver.py must expose a /location route to accept the
  * new GPS payload (the existing /ingest angle route is unchanged).
@@ -47,15 +47,21 @@
 // const char *WIFI_PASS = "98832988";
 const char *WIFI_SSID = "AMAN 2";          // site 4G-router SSID (note the space)
 const char *WIFI_PASS = "AMAN2018";
-const char    *RPI_HOST      = "192.168.100.43";
+const char    *RPI_HOST      = "192.168.100.60";
 const uint16_t RPI_PORT      = 5000;
 const char    *INGEST_PATH   = "/ingest";    // angle stream (existing)
 const char    *LOCATION_PATH = "/location";  // NEW gps stream (add Pi-side route)
 
 const char *DEVICE_ID = "stick";
 
-const uint32_t POST_INTERVAL_MS = 100;             // angle: 100 ms = 10 Hz
-const uint32_t LOC_INTERVAL_MS  = 5UL * 60 * 1000; // location: every 5 minutes
+// Sample the DMP fast (feeds the noise filter) but POST at 1 Hz. The Pi flags a
+// unit "stale" after 1.5 s (sensor_receiver.py stale_ms=1500), so 1 s posting is
+// reliable; 2 s would trip that alarm. Boom/stick move slowly -> 1 Hz is plenty
+// for the depth readout while cutting network load ~10x vs the old 10 Hz.
+const uint32_t SAMPLE_INTERVAL_MS = 10;            // DMP read + filter @ 100 Hz
+const uint32_t POST_INTERVAL_MS   = 1000;          // angle POST @ 1 Hz
+const uint32_t LOC_INTERVAL_MS    = 5UL * 60 * 1000; // location: every 5 minutes (steady)
+const uint32_t GPS_SEARCH_MS      = 5000;            // ...but poll @5 s until a fix
 
 // --- LilyGO T-SIM7000G fixed pin map -----------------------------------------
 #define LED_PIN      12
@@ -77,7 +83,16 @@ Quaternion  q;
 VectorFloat gravity;
 float       ypr[3];
 
-float    rollDeg = 0, pitchDeg = 0, yawDeg = 0;
+float    rollDeg = 0, pitchDeg = 0, yawDeg = 0;   // raw DMP angles (deg)
+
+// --- Noise filter: exponential moving average (EMA) low-pass ----------------
+// One-pole IIR run at the DMP sample rate to smooth jitter before we POST:
+//   filt += ALPHA * (raw - filt);   ALPHA in (0,1]: smaller = smoother + laggier
+// Yaw stays RAW: it wraps at +/-180 deg and an EMA across that wrap would glitch.
+const float EMA_ALPHA = 0.1f;
+float    rollFilt = 0, pitchFilt = 0;
+bool     filtInit = false;
+
 uint32_t angleSeq = 0, locSeq = 0;
 unsigned long lastWifiTry = 0;
 
@@ -146,6 +161,14 @@ static bool readAngle() {
   yawDeg   = ypr[0] * 180.0f / PI;
   pitchDeg = ypr[1] * 180.0f / PI;
   rollDeg  = ypr[2] * 180.0f / PI;   // arm tilt the depth model uses
+
+  // EMA low-pass: seed on the first packet, then smooth every fresh sample.
+  if (!filtInit) {
+    rollFilt = rollDeg; pitchFilt = pitchDeg; filtInit = true;
+  } else {
+    rollFilt  += EMA_ALPHA * (rollDeg  - rollFilt);
+    pitchFilt += EMA_ALPHA * (pitchDeg - pitchFilt);
+  }
   return true;
 }
 
@@ -153,27 +176,33 @@ static bool readAngle() {
 static void postAngle() {
   JsonDocument doc;
   doc["id"]        = DEVICE_ID;
-  doc["angle_deg"] = rollDeg;     // RAW; Pi applies sign/offset + geometry
-  doc["pitch_deg"] = pitchDeg;
-  doc["yaw_deg"]   = yawDeg;
+  doc["angle_deg"] = rollFilt;    // EMA-filtered; Pi applies sign/offset + geometry
+  doc["pitch_deg"] = pitchFilt;   // EMA-filtered
+  doc["yaw_deg"]   = yawDeg;      // raw (yaw wraps; not used by the depth model)
   doc["mpu_ok"]    = dmpReady;
   doc["seq"]       = angleSeq;
   doc["uptime_ms"] = (uint32_t)millis();
   String body; serializeJson(doc, body);
 
   if (httpPostJson(INGEST_PATH, body) > 0) angleSeq++;
-  // 10 Hz -- intentionally quiet (no per-post Serial spam)
+  // 1 Hz -- intentionally quiet (no per-post Serial spam)
 }
 
 static void angleTask(void *pv) {
   initMPU();
   TickType_t last = xTaskGetTickCount();
+  unsigned long lastPostMs = 0;
   for (;;) {
     ensureWifi();
     if (WiFi.status() == WL_CONNECTED) digitalWrite(LED_PIN, HIGH);
-    readAngle();
-    postAngle();
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(POST_INTERVAL_MS));
+    readAngle();                       // fast sampling feeds the EMA filter
+
+    unsigned long now = millis();
+    if (now - lastPostMs >= POST_INTERVAL_MS) {   // but only POST at 1 Hz
+      lastPostMs = now;
+      postAngle();
+    }
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(SAMPLE_INTERVAL_MS));
   }
 }
 
@@ -239,7 +268,10 @@ static void gpsTask(void *pv) {
     int   vsat = 0, usat = 0;
     bool  fix = modem.getGPS(&lat, &lon, &speed, &alt, &vsat, &usat, &acc);
     postLocation(fix, lat, lon, alt, speed, usat, acc);
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(LOC_INTERVAL_MS));
+    // Cold TTFF is 30-60 s; poll fast while there is NO fix so the first (and any
+    // re-acquired) fix is reported within ~5 s of becoming available. Once fixed,
+    // fall back to the slow 5-min cadence. (No fix ever -> keeps searching @5 s.)
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(fix ? LOC_INTERVAL_MS : GPS_SEARCH_MS));
   }
 }
 
@@ -251,7 +283,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.printf("[boot] WiFi '%s' | angle->%s:%u%s (10Hz) | loc->%s (5min)\n",
+  Serial.printf("[boot] WiFi '%s' | angle->%s:%u%s (1Hz) | loc->%s (5s->5min)\n",
                 WIFI_SSID, RPI_HOST, RPI_PORT, INGEST_PATH, LOCATION_PATH);
 
   // Pin the two streams to opposite cores.

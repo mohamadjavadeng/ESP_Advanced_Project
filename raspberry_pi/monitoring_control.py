@@ -13,12 +13,15 @@ ONE process ties together what used to be separate scripts:
 
   2. DWIN HMI (was dwin_hmi_app.py) -- the ONLY thread that owns the serial
      port. It WRITES current depth (0x0001), driver name (0x0200) and target
-     depth (0x0300) to the panel, reads the settings page (beam/stick/wifi via
-     auto-upload -- beam/stick lengths are applied + logged + saved the instant
-     they arrive), and drives the ALARMS: OVER-DIG (VP 0x0401) when depth >=
-     target, HSE/person (VP 0x0402) from the camera thread, and beeps the buzzer
-     whenever EITHER is active (silent only when both clear). Over-dig auto-clears
-     once the operator lifts the bucket (depth < target - hyst).
+     depth (0x0300) to the panel and drives the ALARMS: OVER-DIG (VP 0x0401)
+     when depth >= target, HSE/person (VP 0x0400) from the camera thread, beeping
+     the buzzer whenever EITHER is active (silent only when both clear). Over-dig
+     auto-clears once the operator lifts the bucket (depth < target - hyst). A
+     main-page TARE key (VP 0x1000 == 0x00FF) zeroes the depth at the current
+     position. On the SETTINGS page beam (0x0012) / stick (0x2000) / wifi (ssid
+     0x0330, pw 0x0350) auto-upload with a 1 s confirm beep; beam/stick apply
+     LIVE but only persist on SAVE (0x0011), while BACK (0x0010) reverts every
+     field to the last saved value.
 
   3. CLOUD SYNC (GEOMind / geobox SDK) -- a background thread that:
         * first run on a device: creates a VECTOR layer (+ one FEATURE) and a
@@ -39,7 +42,7 @@ ONE process ties together what used to be separate scripts:
      camera + YOLO model). That script connects to THIS program over a TCP
      socket (--hse-port 5050, newline-delimited JSON) and sends the alarm
      state plus the filename of the saved evidence picture. This program sets
-     runtime["hse_alarm"] (panel VP 0x0402 + buzzer + cloud) and the cloud
+     runtime["hse_alarm"] (panel VP 0x0400 + buzzer + cloud) and the cloud
      thread uploads the alarm JPG and ATTACHES it to the status feature.
      POST /hse stays as a manual fallback. Fail-safe: a camera-client
      disconnect or 30 s of silence clears the alarm.
@@ -58,11 +61,16 @@ the alarm still has a threshold after an offline restart.
 
 Run from the raspberry_pi/ folder (so `import dwin_lcd` resolves):
     pip install flask pyserial geobox tqdm mfrc522 openpyxl
+    export GEOMIND_APIKEY=...            # the pdo_device_service key (ask Hamed)
     python3 monitoring_control.py \
-        --http-port 8080 --dwin-port /dev/serial0 --dwin-baud 115200 \
+        --http-port 5000 --dwin-port /dev/serial0 --dwin-baud 115200 \
         --geomind-host https://app.geo-mind.ai \
-        --geomind-user PDO@excavator1 --geomind-pass PDO@excavator1 \
-        --device-id excavator1 --driver-csv drivers.csv
+        --device-id excavator1 --driver-csv Driver_name_database.xlsx
+
+Auth uses the session-less API KEY ($GEOMIND_APIKEY or --geomind-apikey), which
+does not evict the human portal user and is never revoked mid-run. Only if no key
+is set does it fall back to a password login (--geomind-user/--geomind-pass or
+$GEOMIND_PASS). Keep the key out of git and logs.
 
 The geobox SDK defaults its host to https://api.geobox.ir; we point it at
 https://app.geo-mind.ai purely via the GeoboxClient(host=...) argument -- no SDK
@@ -88,12 +96,20 @@ from dwin_lcd import DwinLCD, BuzzerDuration
 
 # --- optional deps: the program runs without them; the matching subsystem just
 #     degrades gracefully (so this file is also testable on a dev PC). ---------
+class _NoAuthErr(Exception):     # sentinel: never raised; used only as the
+    pass                         # AuthenticationError fallback on older SDKs
+
 try:
     from geobox import GeoboxClient
     from geobox.enums import LayerType, FieldType
     _GEOBOX_OK, _GEOBOX_ERR = True, None
+    try:                         # 401 (revoked/invalid auth) surfaces as this
+        from geobox.exception import AuthenticationError
+    except Exception:            # SDK too old to expose it -> typed catch is a no-op
+        AuthenticationError = _NoAuthErr
 except Exception as _e:                      # ImportError or any load error
     GeoboxClient = LayerType = FieldType = None
+    AuthenticationError = _NoAuthErr
     _GEOBOX_OK, _GEOBOX_ERR = False, _e
 
 try:
@@ -108,14 +124,20 @@ except Exception as _e:
 VP_DEPTH_TEXT    = 0x0001   # current depth, written as TEXT
 VP_DRIVER_NAME   = 0x0200   # driver name, TEXT, max 20 chars
 VP_TARGET_DEPTH  = 0x0300   # target-depth field (from the cloud)
-VP_OVERDIG_ALARM = 0x0401   # over-dig alarm flag: 1 = alarm, 0 = clear  (NEW)
-VP_HSE_ALARM     = 0x0402   # HSE/person alarm flag: 1 = alarm, 0 = clear (NEW; --hse-vp)
+VP_OVERDIG_ALARM = 0x0401   # over-dig alarm flag: 1 = alarm, 0 = clear
+VP_HSE_ALARM     = 0x0400   # HSE/person alarm flag: 1 = alarm, 0 = clear (--hse-vp)
+
+# Main-page "tare depth" key: the panel auto-uploads 0x1000 == 0x00FF when the
+# operator presses it -> capture the current depth as the zero offset.
+VP_DEPTH_OFFSET = 0x1000
+OFFSET_TRIGGER  = 0x00FF
 
 # Page 2 (panel -> Pi, auto-upload)
 VP_BEAM_LEN  = 0x0012      # beam length, TEXT (mm)
-VP_STICK_LEN = 0x0016      # stick length, TEXT (mm) -- 0x0016 in the DGUS
-                           # project + dwin_hmi_app.py (was wrongly 0x2000 here,
-                           # so stick auto-uploads were silently ignored)
+VP_STICK_LEN = 0x2000      # stick length, TEXT (mm) -- 0x2000 in the CURRENT DGUS
+                           # project (operator-confirmed 2026-07-06; older compiled
+                           # bins used 0x0016). If stick edits are ignored, re-check
+                           # this VP + its data-auto-upload flag in the panel.
 VP_SSID      = 0x0330      # Wi-Fi SSID, TEXT
 VP_PASSWORD  = 0x0350      # Wi-Fi password, TEXT
 SETTINGS_VPS = (VP_BEAM_LEN, VP_STICK_LEN, VP_SSID, VP_PASSWORD)
@@ -130,6 +152,9 @@ CMD_READ = 0x83            # auto-upload frames look like a 0x83 read response
 
 # TEXT field widths (bytes) the Pi writes; pad so old longer text is cleared.
 DEPTH_LEN, NAME_LEN, TARGET_LEN = 8, 20, 8
+# Settings-field widths for prefill / BACK write-back. MUST equal the text length
+# set for each VP in the DGUS project, or a write overruns into the next VP.
+LEN_TEXT_LEN, SSID_LEN, PASS_LEN = 8, 20, 20
 
 
 # --------------------------------------------------------------------------- #
@@ -158,6 +183,7 @@ cfg = {
     "boom_sign": 1.0, "stick_sign": 1.0,
     "boom_offset_deg": 0.0, "stick_offset_deg": 0.0,
     "target_depth": 1.5,
+    "depth_offset": 0.0,             # zero/tare offset set from the HMI 0x1000 key
     "stale_ms": 1500,                # an angle unit older than this is "stale"
     "gps_stale_ms": 11 * 60 * 1000,  # a GNSS fix older than this is gps_ok=false
 }
@@ -201,7 +227,8 @@ def load_state(path):
         _persist = {}
     _persist.setdefault("cloud", {})
     with _lock:
-        for key, ck in (("l1", "L1"), ("l2", "L2"), ("target_depth", "target_depth")):
+        for key, ck in (("l1", "L1"), ("l2", "L2"), ("target_depth", "target_depth"),
+                        ("depth_offset", "depth_offset")):
             try:
                 if key in _persist:
                     cfg[ck] = float(_persist[key])
@@ -226,6 +253,7 @@ def save_state():
         _persist["l1"] = cfg["L1"]
         _persist["l2"] = cfg["L2"]
         _persist["target_depth"] = cfg["target_depth"]
+        _persist["depth_offset"] = cfg["depth_offset"]
         data = json.dumps(_persist, indent=2)
     try:
         tmp = _state_path + ".tmp"
@@ -259,7 +287,7 @@ def build_status():
     now = time.monotonic()
     with _lock:
         boom, stick = state["beam"], state["stick"]
-        depth = compute_depth(boom["angle_deg"], stick["angle_deg"])
+        depth = compute_depth(boom["angle_deg"], stick["angle_deg"]) - cfg["depth_offset"]
         boom_age = int((now - boom["ts"]) * 1000) if boom["ts"] else -1
         stick_age = int((now - stick["ts"]) * 1000) if stick["ts"] else -1
         stale = cfg["stale_ms"]
@@ -470,6 +498,9 @@ class HmiController:
         self.hse_shown = False          # last HSE state written to the panel VP
         self.last_push = 0.0
         self.last_beep = 0.0
+        # Saved geometry baseline for a BACK-revert (refreshed on entry + SAVE).
+        with _lock:
+            self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
         # Latest value the panel pushed for each settings VP (seeded from disk).
         self.cache = {
             VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
@@ -485,10 +516,13 @@ class HmiController:
         addr, val = ev.addr, ev.value
         if addr == VP_PAGE_FLAG:                     # settings-page indicator
             if val == TRIGGER and not self.in_settings:
-                self.in_settings = True
-                print("[hmi] panel entered SETTINGS", flush=True)
+                self._enter_settings()
             elif val != TRIGGER and self.in_settings:
                 self.in_settings = False
+            return
+        if addr == VP_DEPTH_OFFSET and val == OFFSET_TRIGGER:   # main-page tare key
+            self.dwin.write_single_reg(addr, 0x0000, ack=False)  # consume press
+            self._tare_depth()
             return
         if addr == VP_SAVE_BTN and val == TRIGGER:
             self.dwin.write_single_reg(addr, 0x0000, ack=False)   # consume press
@@ -500,21 +534,19 @@ class HmiController:
             return
         if addr in SETTINGS_VPS:                     # text field auto-uploaded
             text = decode_text(event_bytes(ev))
-            old = self.cache.get(addr, "")
             self.cache[addr] = text
             shown = text if addr != VP_PASSWORD else "*" * len(text)
             print(f"[hmi] recv 0x{addr:04X} = '{shown}'", flush=True)
-            # Beam/stick lengths: ALWAYS log the read, then apply + save the
-            # instant a NEW value arrives (no SAVE press needed) and use it for
-            # depth from then on.
+            # Beam/stick: apply to the LIVE geometry so depth reflects it at once,
+            # but do NOT persist -- SAVE writes to disk, BACK reverts (working vs
+            # saved copy). ssid/pw are just cached until SAVE.
             if addr in (VP_BEAM_LEN, VP_STICK_LEN):
                 which = "BEAM" if addr == VP_BEAM_LEN else "STICK"
                 print(f"[hmi] {which} LENGTH read from HMI: '{text}' mm", flush=True)
-                if text and text != old:
-                    self._apply_length(addr, text)
-                elif text:
-                    print(f"[hmi] {which.lower()} length unchanged "
-                          f"({text} mm) -- already applied", flush=True)
+                if text:
+                    self._apply_length_live(addr, text)
+            # Confirm EVERY settings input with a 1-second beep (spec).
+            self._confirm_beep()
             return
         # Any other 0x83 frame reaching here is a VP this program does not know.
         # Log it loudly: if the DGUS project uploads beam/stick/save on a
@@ -523,10 +555,51 @@ class HmiController:
         print(f"[hmi] recv UNHANDLED VP 0x{addr:04X} value=0x{val:04X} "
               f"data={data.hex()} text='{decode_text(data)}'", flush=True)
 
-    def _apply_length(self, addr, text):
-        """Apply a beam/stick length pushed from the HMI: log the new value,
-        update the geometry (mm -> m) used by compute_depth, and persist it so it
-        survives a restart / shutdown."""
+    def _enter_settings(self):
+        """Panel switched to the settings page. Snapshot the saved geometry for a
+        possible BACK-revert, reset the working cache to what is on disk, and
+        prefill the Wi-Fi SSID field with the current (saved) network name."""
+        self.in_settings = True
+        with _lock:
+            self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
+            self.cache = {
+                VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
+                VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
+                VP_SSID:      str(_persist.get("wifi_ssid", "")),
+                VP_PASSWORD:  str(_persist.get("wifi_password", "")),
+            }
+            ssid = self.cache[VP_SSID]
+        try:                                         # show the current SSID
+            put_text(self.dwin, VP_SSID, ssid, SSID_LEN, ack=False)
+        except Exception as e:
+            print(f"[hmi] SSID prefill failed: {e}", flush=True)
+        print("[hmi] panel entered SETTINGS", flush=True)
+
+    def _tare_depth(self):
+        """Main-page tare key (VP 0x1000 == 0x00FF): set the zero offset to the
+        current depth so the panel reads 0 at this position (persisted)."""
+        with _lock:
+            raw = compute_depth(state["beam"]["angle_deg"],
+                                state["stick"]["angle_deg"])
+            cfg["depth_offset"] = raw
+        save_state()
+        try:
+            self.dwin.buzzer(BuzzerDuration.BUZZ_1SEC, ack=False)
+        except Exception:
+            pass
+        print(f"[hmi] depth TARED: offset={raw:.3f} m (VP 0x1000)", flush=True)
+
+    def _confirm_beep(self):
+        """1-second buzzer confirming the panel pushed a settings value (spec)."""
+        try:
+            self.dwin.buzzer(BuzzerDuration.BUZZ_1SEC, ack=False)
+        except Exception:
+            pass
+
+    def _apply_length_live(self, addr, text):
+        """Apply a beam/stick length to the LIVE geometry (mm -> m) so depth
+        updates immediately. Persisting waits for SAVE; BACK reverts. A
+        non-numeric value is logged and ignored."""
         which = "beam (L1)" if addr == VP_BEAM_LEN else "stick (L2)"
         try:
             mm = float(text)
@@ -537,23 +610,22 @@ class HmiController:
         with _lock:
             if addr == VP_BEAM_LEN:
                 cfg["L1"] = metres
-                _persist["beam_len_mm"] = text
             else:
                 cfg["L2"] = metres
-                _persist["stick_len_mm"] = text
-        save_state()   # persist immediately (save_state acquires the lock itself)
-        print(f"[hmi] {which} length updated from HMI: {mm:.0f} mm "
-              f"({metres:.3f} m) -- applied + saved", flush=True)
+        print(f"[hmi] {which} length applied LIVE: {mm:.0f} mm ({metres:.3f} m) "
+              f"-- not saved until SAVE", flush=True)
 
     def _save(self):
+        """SAVE button: persist the working copy (geometry + Wi-Fi) to disk and
+        make it the new saved baseline, then return to the main page."""
         beam = self.cache.get(VP_BEAM_LEN, "")
         stick = self.cache.get(VP_STICK_LEN, "")
         ssid = self.cache.get(VP_SSID, "")
         pw = self.cache.get(VP_PASSWORD, "")
-        print(f"[hmi] save beam={beam!r}mm stick={stick!r}mm "
+        print(f"[hmi] SAVE beam={beam!r}mm stick={stick!r}mm "
               f"ssid={ssid!r} pw={'*' * len(pw)}", flush=True)
         with _lock:
-            try:                                     # apply geometry (mm -> m)
+            try:                                     # keep geometry in sync w/ text
                 if beam:
                     cfg["L1"] = float(beam) / 1000.0
                 if stick:
@@ -562,24 +634,40 @@ class HmiController:
                 print("[hmi] beam/stick not numeric -- geometry unchanged", flush=True)
             _persist.update(beam_len_mm=beam, stick_len_mm=stick,
                             wifi_ssid=ssid, wifi_password=pw)
+            self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]   # new baseline
         save_state()
-        # NOTE: applying the Wi-Fi SSID/password to the OS (wpa_supplicant /
-        # NetworkManager) is system-specific -- do it here if you need it.
+        # Wi-Fi SSID/pw are persisted to the state file ONLY (operator choice). To
+        # actually switch the Pi's network, apply ssid/pw to NetworkManager /
+        # wpa_supplicant here.
         self.dwin.buzzer(BuzzerDuration.BUZZ_250MSEC, ack=False)
         self.dwin.goto_page(self.args.main_page, ack=False)
         self.in_settings = False
 
     def _cancel(self):
-        with _lock:                                  # drop edits: reload from disk
+        """BACK button: discard edits. Restore live geometry to the saved
+        baseline, reload the working cache from disk, and write the saved
+        beam/stick/ssid back to the panel so the fields show the unchanged
+        values (spec)."""
+        with _lock:                                  # revert live geometry + cache
+            cfg["L1"], cfg["L2"] = self.saved_L1, self.saved_L2
             self.cache = {
                 VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
                 VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
                 VP_SSID:      str(_persist.get("wifi_ssid", "")),
                 VP_PASSWORD:  str(_persist.get("wifi_password", "")),
             }
+            beam, stick, ssid = (self.cache[VP_BEAM_LEN],
+                                 self.cache[VP_STICK_LEN], self.cache[VP_SSID])
+        try:                                         # revert the on-screen fields
+            put_text(self.dwin, VP_BEAM_LEN,  beam,  LEN_TEXT_LEN, ack=False)
+            put_text(self.dwin, VP_STICK_LEN, stick, LEN_TEXT_LEN, ack=False)
+            put_text(self.dwin, VP_SSID,      ssid,  SSID_LEN, ack=False)
+        except Exception as e:
+            print(f"[hmi] revert write-back failed: {e}", flush=True)
         self.dwin.buzzer(BuzzerDuration.BUZZ_250MSEC, ack=False)
         self.dwin.goto_page(self.args.main_page, ack=False)
         self.in_settings = False
+        print("[hmi] BACK: edits discarded, fields restored", flush=True)
 
     # ----- writes to the panel ---------------------------------------------
     def _push_values(self, st):
@@ -728,12 +816,33 @@ class CloudSync:
                 pass   # already exists (or transient) -- safe to ignore
 
     def connect(self):
-        self.client = GeoboxClient(host=self.args.geomind_host,
-                                   username=self.args.geomind_user,
-                                   password=self.args.geomind_pass,
-                                   verify=not self.args.insecure)
-        print(f"[cloud] authenticated to {self.args.geomind_host} "
-              f"as {self.args.geomind_user}", flush=True)
+        # Prefer the session-less API KEY (contract §1): a password login evicts
+        # whoever is using the GeoMind portal AND our long-running session gets
+        # revoked the moment anyone else logs in ("Session has been revoked").
+        # The key rides as a ?apikey= query param, so keep TLS verification ON
+        # (pass --insecure only for a self-signed tenant cert). Never log the key.
+        verify = not self.args.insecure
+        if self.args.geomind_apikey:
+            self.client = GeoboxClient(host=self.args.geomind_host,
+                                       apikey=self.args.geomind_apikey,
+                                       verify=verify)
+            print(f"[cloud] authenticated to {self.args.geomind_host} "
+                  f"via API key (session-less)", flush=True)
+        elif self.args.geomind_user and self.args.geomind_pass:
+            print("[cloud] WARNING: no --geomind-apikey/$GEOMIND_APIKEY set; "
+                  "falling back to PASSWORD login. This evicts the portal user "
+                  "and is revoked when anyone else logs in. Use the API key.",
+                  flush=True)
+            self.client = GeoboxClient(host=self.args.geomind_host,
+                                       username=self.args.geomind_user,
+                                       password=self.args.geomind_pass,
+                                       verify=verify)
+            print(f"[cloud] authenticated to {self.args.geomind_host} "
+                  f"as {self.args.geomind_user} (password)", flush=True)
+        else:
+            raise RuntimeError(
+                "no GeoMind credentials: set --geomind-apikey (or $GEOMIND_APIKEY), "
+                "or provide --geomind-user/--geomind-pass")
 
     # ----- first-run create / later-run reuse ------------------------------
     def ensure_objects(self):
@@ -839,9 +948,14 @@ class CloudSync:
 
     # ----- one sync cycle ---------------------------------------------------
     def poll_and_push(self):
-        # 1) read the target depth the operator set in the GEOMind web UI
-        feature = self.layer.get_feature(self.feature_id, out_srid=4326)
-        props = feature.data.setdefault("properties", {})
+        # 1) read the target depth the operator set in the GEOMind web UI.
+        #    Read at the STORED CRS (no out_srid=4326): out_srid makes the SDK
+        #    call feature.transform(), which needs the geobox[geometry] extra
+        #    (shapely+pyproj) and raises on a still-empty geometry -- it would
+        #    crash the poll loop on a stock Pi. We overwrite the geometry on
+        #    every push anyway, so the read projection is irrelevant.
+        feature = self.layer.get_feature(self.feature_id)
+        props = dict(feature.data.get("properties") or {})
         tgt = props.get("target_depth")
         if tgt is not None:
             try:
@@ -875,12 +989,17 @@ class CloudSync:
                      hse_alarm=int(rt["hse_alarm"]),
                      last_alarm_picture=rt["hse_picture"],
                      updated_at=_now_iso())
-        geom = feature.data.setdefault("geometry", {"type": "Point", "coordinates": [0, 0]})
-        geom["coordinates"] = [lon, lat]
-        feature.save()
+        # Write the FULL GeoJSON payload with srid=4326: feature.update() forces
+        # ?in_srid=4326 so the server reprojects our WGS84 [lon,lat] into its
+        # stored EPSG:3857. An untagged write would treat degrees as metres and
+        # grossly mislocate the marker. The payload MUST carry a "geometry" key
+        # or the SDK raises KeyError 'geometry'.
+        feature.update({"type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                        "properties": props}, srid=4326)
 
         # 3) upload + attach any queued HSE alarm pictures to the feature
-        self._attach_pictures(feature)
+        self._attach_pictures(feature, lon, lat)
 
         # 4) driver-session history: open/close sessions + count alarm events
         self._update_session(rt)
@@ -888,7 +1007,7 @@ class CloudSync:
         # 5) log a table row ONLY on a driver change or an alarm edge
         self._maybe_log(st, rt, lat, lon, target)
 
-    def _attach_pictures(self, feature):
+    def _attach_pictures(self, feature, lon=0, lat=0):
         """Upload queued HSE-alarm evidence JPGs (sent over the camera TCP link)
         and attach each to the status feature, so the alarm picture is visible
         on the cloud object. A failed picture is retried on later cycles, up to
@@ -899,6 +1018,12 @@ class CloudSync:
             except queue.Empty:
                 return
             name = os.path.basename(path)
+            # The web-app gallery only lists attachments whose filename starts
+            # with 'alarm_'. The camera script already names them that way; warn
+            # (don't rename the on-disk file) if a detector ever sends otherwise.
+            if not name.startswith("alarm_"):
+                print(f"[cloud] WARNING: HSE picture '{name}' does not start with "
+                      f"'alarm_'; it may not appear in the web-app gallery", flush=True)
             try:
                 if not os.path.exists(path):
                     print(f"[cloud] alarm picture not found: {path} -- skipped "
@@ -906,7 +1031,7 @@ class CloudSync:
                     continue
                 fobj = self.client.upload_file(path=path, scan_archive=False)
                 self.layer.create_attachment(
-                    name=os.path.splitext(name)[0], loc_x=0, loc_y=0,
+                    name=os.path.splitext(name)[0], loc_x=lon, loc_y=lat,
                     file=fobj, feature=feature, display_name=name,
                     description=f"HSE person-in-zone alarm evidence ({_now_iso()})")
                 print(f"[cloud] alarm picture attached to feature: {name}", flush=True)
@@ -928,35 +1053,56 @@ class CloudSync:
         changed = (not first) and key != self.last_logged
         if not (first or changed):
             return
-        event = self._event_label(key, first, changed)
-        try:
-            self.table.create_row(
-                ts=_now_iso(), driver=rt["driver_name"], depth=st["depth_m"],
-                target_depth=target, over_dig_alarm=int(rt["over_dig_alarm"]),
-                sensor_alarm=int(rt["sensor_alarm"]), hse_alarm=int(rt["hse_alarm"]),
-                lat=lat, lon=lon, event=event)
-            print(f"[cloud] row '{event}' logged (depth={st['depth_m']:.3f}m)", flush=True)
-        except Exception as e:
-            print(f"[cloud] row log failed: {e}", flush=True)
-            return
-        self.last_logged = key
-
-    def _event_label(self, key, first, changed):
+        # One row PER event token (contract §2.2 single-token enum -- never a
+        # comma-joined string the bridge can't parse). Each token flips exactly
+        # ONE component of the state key, so we advance the log cursor
+        # (last_logged) only past the tokens whose row actually landed. On the
+        # first failed row we stop: the remaining edge stays live and is retried
+        # next cycle -- no lost edge, no duplicate row (fixes the non-atomic
+        # "advance if any succeeded" trap).
+        steps = self._event_steps(key, first)
+        advanced = None if first else list(self.last_logged)
+        all_ok = True
+        for token, idx, newval in steps:
+            try:
+                self.table.create_row(
+                    ts=_now_iso(), driver=rt["driver_name"], depth=st["depth_m"],
+                    target_depth=target, over_dig_alarm=int(rt["over_dig_alarm"]),
+                    sensor_alarm=int(rt["sensor_alarm"]), hse_alarm=int(rt["hse_alarm"]),
+                    lat=lat, lon=lon, event=token)
+                print(f"[cloud] row '{token}' logged (depth={st['depth_m']:.3f}m)", flush=True)
+                if idx is not None:
+                    advanced[idx] = newval
+            except Exception as e:
+                all_ok = False
+                print(f"[cloud] row log failed ({token}); will retry next cycle: {e}",
+                      flush=True)
+                break     # leave the rest of the edge un-advanced -> retried
         if first:
-            return "init"
-        if not changed:
-            return "heartbeat"
-        prev, labels = self.last_logged, []
+            if all_ok:
+                self.last_logged = key      # init landed
+        else:
+            self.last_logged = tuple(advanced)   # only past tokens that landed
+
+    def _event_steps(self, key, first):
+        """Ordered [(token, component_index_or_None, new_value), ...] walking
+        last_logged -> key one component at a time. Each alarm/driver token flips
+        exactly one key component so a per-row write can advance the cursor
+        precisely as far as it succeeded (contract §2.2 single-token enum)."""
+        if first:
+            return [("init", None, None)]
+        prev = self.last_logged
         over, sensor, hse, tag = key
+        steps = []
         if prev[0] != over:
-            labels.append("over_dig_on" if over else "over_dig_off")
+            steps.append(("over_dig_on" if over else "over_dig_off", 0, over))
         if prev[1] != sensor:
-            labels.append("sensor_alarm_on" if sensor else "sensor_alarm_off")
+            steps.append(("sensor_alarm_on" if sensor else "sensor_alarm_off", 1, sensor))
         if prev[2] != hse:
-            labels.append("hse_on" if hse else "hse_off")
+            steps.append(("hse_on" if hse else "hse_off", 2, hse))
         if prev[3] != tag:
-            labels.append("driver_change")
-        return ",".join(labels) if labels else "heartbeat"
+            steps.append(("driver_change", 3, tag))
+        return steps
 
     # ----- driver-session history (requirement #6) --------------------------
     def _update_session(self, rt):
@@ -1081,6 +1227,21 @@ class CloudSync:
                 self.poll_and_push()
                 with _lock:
                     runtime["cloud_ok"] = True
+            except AuthenticationError as e:
+                # A revoked/expired session (e.g. someone logged into the portal
+                # while we were on password auth) lands here. Re-authenticate and
+                # re-resolve the objects. The API-key path is session-less and
+                # should never hit this -- the typed reconnect is defence in depth.
+                with _lock:
+                    runtime["cloud_ok"] = False
+                print(f"[cloud] auth lost ({e}); reconnecting...", flush=True)
+                try:
+                    self.connect()
+                    self.ensure_objects()
+                    print("[cloud] reconnected", flush=True)
+                except Exception as re:
+                    print(f"[cloud] reconnect failed ({re}); retry next cycle",
+                          flush=True)
             except Exception as e:
                 with _lock:
                     runtime["cloud_ok"] = False
@@ -1327,7 +1488,7 @@ class RfidReader:
 #     {"type": "hse", "active": true, "picture": "/abs/path/alarm_x.jpg"}
 #     {"type": "hse", "active": false}
 # On "hse" the server sets runtime["hse_alarm"] (the HMI thread mirrors it to
-# panel VP 0x0402 + buzzer, the cloud thread pushes it) and, when a picture
+# panel VP 0x0400 + buzzer, the cloud thread pushes it) and, when a picture
 # path is included, queues the JPG so the cloud thread uploads it and attaches
 # it to the status feature. POST /hse stays as a manual fallback.
 
@@ -1443,8 +1604,10 @@ def main():
     ap = argparse.ArgumentParser(
         description="Integrated excavation monitor: ESP32 ingest + DWIN HMI + "
                     "GEOMind cloud + RFID driver id")
-    # HTTP (ESP32 ingest server)
-    ap.add_argument("--http-host", default="192.168.100.43")
+    # HTTP (ESP32 ingest server). Bind all interfaces by default: a hardcoded IP
+    # crashes with EADDRNOTAVAIL when the Pi's DHCP address changes; 0.0.0.0
+    # always binds and the ESP32 units still POST to the Pi's real IP.
+    ap.add_argument("--http-host", default="0.0.0.0")
     ap.add_argument("--http-port", type=int, default=5000)
     # DWIN serial panel
     ap.add_argument("--dwin-port", default="/dev/serial0")
@@ -1465,10 +1628,19 @@ def main():
                     help="m below target the depth must fall to clear the alarm")
     ap.add_argument("--beep-period", type=float, default=1.0,
                     help="seconds between buzzer beeps while over-digging")
-    # cloud (GEOMind)
+    # cloud (GEOMind). PREFER the session-less API key (contract §1): keep it in
+    # the environment / a secret store, never in git or logs. Password login is a
+    # last resort -- it evicts the portal user and is revoked on any other login.
     ap.add_argument("--geomind-host", default="https://app.geo-mind.ai")
+    ap.add_argument("--geomind-apikey",
+                    default=os.environ.get("GEOMIND_APIKEY")
+                    or os.environ.get("PDO_DEVICE_APIKEY"),
+                    help="GeoMind API key (default: $GEOMIND_APIKEY / "
+                         "$PDO_DEVICE_APIKEY); session-less, preferred over password")
     ap.add_argument("--geomind-user", default="pdo.excavator")
-    ap.add_argument("--geomind-pass", default="PDO@excavator1")
+    ap.add_argument("--geomind-pass", default=os.environ.get("GEOMIND_PASS"),
+                    help="password fallback (default: $GEOMIND_PASS); used only "
+                         "when no API key is given")
     ap.add_argument("--device-id", default="excavator1",
                     help="names the per-device cloud objects: <id>_status, <id>_log")
     ap.add_argument("--cloud-interval", type=float, default=5.0,
@@ -1492,7 +1664,7 @@ def main():
     ap.add_argument("--overdig-vp", type=lambda x: int(x, 0), default=VP_OVERDIG_ALARM,
                     help="VP for the over-dig alarm flag (default 0x0401)")
     ap.add_argument("--hse-vp", type=lambda x: int(x, 0), default=VP_HSE_ALARM,
-                    help="VP for the HSE/person alarm flag (default 0x0402)")
+                    help="VP for the HSE/person alarm flag (default 0x0400)")
     # equipment home location -- the map marker sits here until a live GNSS fix
     ap.add_argument("--home-lat", type=float, default=23.5900,
                     help="fallback latitude for the map marker (default: Muscat, Oman)")

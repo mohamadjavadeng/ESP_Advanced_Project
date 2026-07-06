@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoMind Device-Side Integration — Change Report (EXC-01)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Inter, system-ui, sans-serif; background: #0d141b; color: #dbe6ef; line-height: 1.55; }
+  .page { max-width: 1040px; margin: 0 auto; padding: 32px 24px 90px; }
+  header.doc { background: linear-gradient(120deg, #072c18, #00843d); border-radius: 14px; padding: 26px 30px; margin-bottom: 24px; }
+  header.doc h1 { font-size: 24px; color: #fff; }
+  header.doc p { color: #d7fbe8; margin-top: 6px; font-size: 14px; }
+  h2 { font-size: 18px; margin: 34px 0 12px; color: #4fe08d; border-bottom: 1px solid #24425c; padding-bottom: 6px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; color: #9adcff; }
+  p, li { font-size: 14px; }
+  ul, ol { margin: 8px 0 8px 22px; }
+  .card { background: #121e29; border: 1px solid #23384c; border-radius: 12px; padding: 16px 18px; margin: 12px 0; }
+  .warn { border-left: 5px solid #da291c; }
+  .ok { border-left: 5px solid #00843d; }
+  .amber { border-left: 5px solid #f5a800; }
+  .blue { border-left: 5px solid #3d8bff; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12.8px; }
+  th { background: #182a3a; text-align: left; padding: 7px 9px; border: 1px solid #29435c; font-size: 11.3px; text-transform: uppercase; letter-spacing: .4px; color: #9adcff; }
+  td { padding: 6px 9px; border: 1px solid #223a50; vertical-align: top; }
+  code { background: #182a3a; border: 1px solid #29435c; border-radius: 4px; padding: 1px 5px; font-family: Consolas, monospace; font-size: 12.1px; color: #ffd9a0; }
+  pre { background: #0a1219; border: 1px solid #23384c; color: #cfe3f2; border-radius: 10px; padding: 12px 14px; overflow-x: auto; font-size: 12.1px; font-family: Consolas, monospace; margin: 10px 0; }
+  pre .c { color: #6f8aa0; }
+  pre .del { color: #ff8f8f; }
+  pre .add { color: #86efac; }
+  .kv { color: #7f95a8; font-size: 12.3px; }
+  .pill { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 10px; font-weight: 700; letter-spacing:.3px; }
+  .pill.read { background: #10324a; color: #7fd4ff; border: 1px solid #2b6a94; }
+  .pill.write { background: #1e3a12; color: #a6f07a; border: 1px solid #3d7a1f; }
+  .pill.none { background: #3a1212; color: #ff9f9f; border: 1px solid #7a2b2b; }
+  .pill.derived { background: #3a2e10; color: #ffd479; border: 1px solid #7a6320; }
+  .tag { color:#5fd6c8; font-weight:600; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px){ .grid2 { grid-template-columns: 1fr; } }
+  .num { color:#4fe08d; font-weight:700; }
+  summary { cursor: pointer; color:#9adcff; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="doc">
+  <h1>GeoMind Device-Side Integration — Change Report</h1>
+  <p>Excavator EXC-01 · Raspberry-Pi controller (<code>monitoring_control.py</code>) · what I read from / write to GeoMind, the two HSE-event concepts, and the exact code changes made. Angle-reading and HSE-alarm-reading were left untouched by design.</p>
+</header>
+
+<div class="card blue">
+<b>TL;DR</b> — I mapped the full GeoMind read/write contract (vectors + tables), then aligned the cloud-sync code to it. The headline change the device team asked for is <b>switching cloud auth from password to the session-less API key</b>. I also hardened the feature write (correct map position on any Pi), made the event log atomic and single-token so the fleet bridge parses it, added a typed auth-reconnect, and fixed a latent Flask bind crash. <b>The angle pipeline (ESP32 → depth) and the camera HSE-alarm pipeline were not modified.</b> Two files changed: <code>raspberry_pi/monitoring_control.py</code>, <code>raspberry_pi/geobox_token.py</code>.
+</div>
+
+<h2>1 · GeoMind VECTORS — what I read vs write</h2>
+<p>A "vector" is a spatial layer (geometry + attribute properties). The device owns exactly one live vector; everything else on the <code>pdo.excavator</code> account is fleet/context data the <span class="tag">bridge</span> (their side) owns.</p>
+<div class="card">
+<table>
+<tr><th style="width:22%">Vector layer</th><th style="width:14%">My access</th><th>Properties &amp; direction</th></tr>
+<tr>
+  <td><code>excavator1_status</code><br><span class="kv">layer #66534 · ONE Point feature</span></td>
+  <td><span class="pill read">READ</span> <span class="pill write">WRITE</span></td>
+  <td>
+    <span class="pill read">READ&nbsp;BACK</span> <code>target_depth</code> — operators set the permitted depth in the portal; the device reads it every cycle and it drives the over-dig alarm + cab display.<br>
+    <span class="pill write">WRITE</span> <code>current_depth</code>, <code>target_depth</code>&nbsp;(echo), <code>driver</code>, <code>rfid_uid</code>, <code>driver_present</code>, <code>over_dig_alarm</code>, <code>sensor_alarm</code>, <code>hse_alarm</code>, <code>last_alarm_picture</code>, <code>updated_at</code> (ISO-8601 heartbeat), and the <b>geometry</b> = live GNSS <code>[lon,&nbsp;lat]</code> (or the Muscat home fallback).
+  </td>
+</tr>
+<tr>
+  <td><code>pdo_fleet</code></td>
+  <td><span class="pill none">DON'T&nbsp;WRITE</span></td>
+  <td>Fleet-wide layer (18 machines). The bridge <i>mirrors</i> my <code>excavator1_status</code> into the EXC-01 row every 20 s (renaming my fields/depth→depth_m mapping is the bridge's job). Device never writes here.</td>
+</tr>
+<tr>
+  <td><code>zones</code>, <code>pipes</code>, <code>permits</code>, <code>sites</code>, <code>pdo_workers</code></td>
+  <td><span class="pill none">CONTEXT</span></td>
+  <td>Site context layers owned by the bridge team. Not needed or written by the device.</td>
+</tr>
+</table>
+<p class="kv">Resolve the layer <b>by name</b> (<code>get_vector_by_name("excavator1_status")</code>) — the contract warns UUIDs rotate on re-provision; names are the stable handle. Already done in code.</p>
+</div>
+
+<h2>2 · GeoMind TABLES — what I read vs write</h2>
+<div class="card">
+<table>
+<tr><th style="width:22%">Table</th><th style="width:14%">My access</th><th>Columns &amp; rule</th></tr>
+<tr>
+  <td><code>excavator1_log</code></td>
+  <td><span class="pill write">WRITE (append)</span></td>
+  <td>Columns <code>ts, driver, depth, target_depth, over_dig_alarm, sensor_alarm, hse_alarm, lat, lon, event</code>. Append <b>change-only</b> rows (plus one <code>init</code> at startup). <code>event</code> ∈ the single-token enum below.</td>
+</tr>
+<tr>
+  <td><code>excavator1_sessions</code></td>
+  <td><span class="pill write">WRITE (append)</span></td>
+  <td>Columns <code>driver, rfid_uid, date, start_time, end_time, total_alarms, hse_alarm_count, over_dig_alarm_count</code>. One row per RFID driver session; opened on driver change, closed on change/shutdown, resumed across restarts.</td>
+</tr>
+<tr>
+  <td><code>pdo_fleet_log</code>, <code>pdo_sessions</code>, <code>pdo_events</code></td>
+  <td><span class="pill none">DON'T&nbsp;WRITE</span></td>
+  <td>The bridge copies my new <code>excavator1_log</code>/<code>_sessions</code> rows into these (id-cursor) with <code>mid='EXC-01'</code>. Also read: the 25 <code>pdo_q2_*</code> saved SQL queries power the dashboards — device never touches them.</td>
+</tr>
+</table>
+<p><b>Event enum</b> (the bridge parses these <i>exact single tokens</i>): <code>init</code> · <code>heartbeat</code> · <code>over_dig_on</code>/<code>over_dig_off</code> · <code>sensor_alarm_on</code>/<code>sensor_alarm_off</code> · <code>hse_on</code>/<code>hse_off</code> · <code>driver_change</code>.</p>
+</div>
+
+<h2>3 · The two HSE concepts (Event_type_table.png &amp; hipo.png)</h2>
+<div class="grid2">
+<div class="card">
+<h3><code>lsr_rule</code> — Life-Saving Rule</h3>
+<p>Every AI event is tagged with the IOGP Life-Saving Rule it relates to, so the event log speaks PDO's HSE compliance language:</p>
+<table>
+<tr><th>Event type</th><th>LSR</th></tr>
+<tr><td>Person Detected, Utility Strike, OHL Clearance</td><td>Line of Fire</td></tr>
+<tr><td>Over-dig, Dig Outside Permit, Zone Breach</td><td>Work Authorisation</td></tr>
+<tr><td>Person Under Suspended Load</td><td>Safe Mechanical Lifting</td></tr>
+<tr><td>Vehicle Proximity, V2V Near-Miss</td><td>Driving</td></tr>
+<tr><td>Device Fault</td><td>— (not safety-relevant)</td></tr>
+</table>
+</div>
+<div class="card">
+<h3><code>hipo</code> — High-Potential incident flag</h3>
+<p>A 0/1 flag on each event: a near-miss whose realistic worst case was serious injury/fatality — the leading HSE indicator, feeding the Command-Center "Near-Misses Auto-Captured" KPI. Each captured HiPo carries GPS + depth + a camera frame as evidence.</p>
+</div>
+</div>
+<div class="card amber">
+<b>Who writes them:</b> <span class="pill derived">DERIVED — not by the device</span> Both <code>lsr_rule</code> and <code>hipo</code> live on the <b>fleet event log</b> and are assigned by the bridge/<code>datagen.py</code> (their side) from the event type + severity. <b>The device's job is only to emit the correct single-token <code>event</code> string</b> (e.g. <code>hse_on</code>, <code>over_dig_on</code>) so the bridge can map it to the right LSR and decide HiPo. This is exactly why change #4 below (atomic, single-token log rows) matters — a comma-joined <code>"hse_on,driver_change"</code> would not map to any rule.</p>
+</div>
+
+<h2>4 · Code changes made</h2>
+<p class="kv">All edits are confined to the cloud-sync layer (<code>CloudSync</code> class, its <code>connect()</code>, the <code>main()</code> argument block, the import guard) and the <code>geobox_token.py</code> helper. Verified: no protected code changed (§5).</p>
+
+<div class="card">
+<h3><span class="num">1.</span> Auth: password → session-less API key <span class="pill write">device-team request #1</span></h3>
+<p>Password login evicts the human portal user and gets revoked when anyone else logs in. Switched to the API key, which is session-less. Key comes from the environment (never git/logs); password remains a last-resort fallback with a loud warning.</p>
+<pre><span class="c"># CloudSync.connect() — before</span>
+<span class="del">self.client = GeoboxClient(host=..., username=user, password=pass, verify=...)</span>
+<span class="c"># after</span>
+<span class="add">if self.args.geomind_apikey:
+    self.client = GeoboxClient(host=..., apikey=self.args.geomind_apikey, verify=verify)
+elif self.args.geomind_user and self.args.geomind_pass:
+    print("[cloud] WARNING: no API key; password login evicts the portal user…")
+    self.client = GeoboxClient(host=..., username=..., password=..., verify=verify)
+else:
+    raise RuntimeError("no GeoMind credentials: set --geomind-apikey / $GEOMIND_APIKEY")</span></pre>
+<p class="kv">New arg <code>--geomind-apikey</code> (default <code>$GEOMIND_APIKEY</code> / <code>$PDO_DEVICE_APIKEY</code>). The hardcoded password default was removed from argparse (now <code>$GEOMIND_PASS</code>) so the credential is no longer committed to git. The key rides as a <code>?apikey=</code> query param, so TLS verification stays <b>ON</b> by default (pass <code>--insecure</code> only for a self-signed tenant cert).</p>
+</div>
+
+<div class="card">
+<h3><span class="num">2.</span> Robust feature write — correct map position on <i>any</i> Pi</h3>
+<p>The old read used <code>get_feature(..., out_srid=4326)</code>, which makes the SDK call <code>feature.transform()</code> — that needs the <code>geobox[geometry]</code> extra (shapely + pyproj) and raises on a still-empty geometry, so it can crash the poll loop on a stock Pi. The write used <code>feature.save()</code>, whose CRS tag is fragile. Switched to the contract's documented pattern:</p>
+<pre><span class="c"># poll_and_push()</span>
+<span class="add">feature = self.layer.get_feature(self.feature_id)          # no out_srid -> no transform()
+props   = dict(feature.data.get("properties") or {})
+…
+feature.update({"type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},  # WGS84
+                "properties": props}, srid=4326)           # -> ?in_srid=4326, server reprojects</span></pre>
+<p class="kv">Verified against the installed SDK source: <code>update()</code> forces <code>?in_srid=4326</code> and requires a <code>geometry</code> key (else <code>KeyError</code>). This removes the shapely/pyproj dependency and guarantees the marker lands at the real lat/lon instead of being read as metres.</p>
+</div>
+
+<div class="card">
+<h3><span class="num">3.</span> Atomic, single-token event log</h3>
+<p>When several states flip in one cycle the old code wrote a comma-joined event (<code>"hse_on,driver_change"</code>) the bridge can't parse. Now each transition writes <b>one row per token</b>, and the log cursor advances only past rows that actually landed — so a transient cloud error on one token leaves that edge live for retry (no lost edge, no duplicate). This was rewritten <i>and</i> a regression it introduced was caught in adversarial review and fixed (see §6).</p>
+<pre><span class="c"># each token flips exactly one state component; stop at first failure</span>
+<span class="add">steps = self._event_steps(key, first)   # [(token, component_idx, new_value), …]
+for token, idx, newval in steps:
+    try:
+        self.table.create_row(…, event=token); advanced[idx] = newval
+    except Exception: break               # remaining edge retried next cycle
+self.last_logged = tuple(advanced)</span></pre>
+</div>
+
+<div class="card">
+<h3><span class="num">4.</span> Typed auth-loss reconnect</h3>
+<p>The steady-state loop now catches <code>geobox.exception.AuthenticationError</code> by type and re-authenticates + re-resolves objects (defence-in-depth; the API-key path should never hit it). The import is guarded with a sentinel so an older SDK without that class can't disable cloud sync.</p>
+</div>
+
+<div class="card">
+<h3><span class="num">5.</span> Flask bind-host crash fix <span class="kv">(from raspberry_pi/bind_error_fix.txt)</span></h3>
+<pre><span class="del">ap.add_argument("--http-host", default="192.168.100.43")   # crashes: EADDRNOTAVAIL when DHCP differs</span>
+<span class="add">ap.add_argument("--http-host", default="0.0.0.0")          # always binds; ESP32s still POST to the real IP</span></pre>
+<p class="kv">A hardcoded IP that the Pi doesn't currently own makes the whole server die on bind. <code>0.0.0.0</code> is the documented permanent fix and matches the HSE socket server. Relevant to the ESP32 <b>location</b> issue too — if the receiver can't bind, neither angle nor GPS POSTs land.</p>
+</div>
+
+<div class="card">
+<h3><span class="num">6.</span> <code>geobox_token.py</code> helper fixes</h3>
+<ul>
+<li>Default username was <code>PDO@excavator1</code> — that is the <b>password</b>, not the username (the username is <code>pdo.excavator</code>). A bare run therefore burned a failed login (lockout risk). Fixed the default and made API-key the preferred path (env-driven).</li>
+<li>Added a pre-network guard: with neither key nor password set, it now exits with a clear message <b>without contacting the server</b> (no credential-less login attempt).</li>
+</ul>
+</div>
+
+<h2>5 · What I deliberately did NOT touch</h2>
+<div class="card ok">
+<p>You said these work perfectly — confirmed untouched (adversarial review lens = "protected-section integrity": <b>clean, zero changes</b>):</p>
+<table>
+<tr><th>Subsystem</th><th>Code (unchanged)</th></tr>
+<tr><td>Angle reading (ESP32 → depth)</td><td><code>/ingest</code>, <code>/location</code> routes, <code>build_status()</code>, <code>compute_depth()</code>, the <code>state</code>/<code>location</code> dicts</td></tr>
+<tr><td>Camera HSE-alarm reading</td><td><code>HseSocketServer</code> (TCP link from <code>ezviz_camera/rpi_person_zone_alarm.py</code>), the <code>/hse</code> route, the <code>_attach_q</code> picture queue</td></tr>
+<tr><td>DWIN HMI + RFID + buzzer</td><td><code>HmiController</code>, <code>RfidReader</code>, <code>set_driver()</code></td></tr>
+</table>
+<p class="kv">Confirmed structurally safe: every <code>runtime[…]</code> / <code>build_status()</code> key that CloudSync reads is produced by this protected code, so changing the cloud auth/write path cannot alter angle or HSE behaviour.</p>
+</div>
+
+<h2>6 · How it was verified</h2>
+<div class="card">
+<ul>
+<li><b>Pre-edit verification</b> (3 parallel agents): confirmed the SDK's <code>save()</code> vs <code>update()</code> semantics from source, the <code>apikey</code>/<code>AuthenticationError</code> API, and mapped the exact protected line-ranges before any edit.</li>
+<li><b>Adversarial review</b> (4 independent lenses): protected-integrity <span class="pill ok" style="background:#1e3a12;color:#a6f07a;border:1px solid #3d7a1f;padding:0 6px;border-radius:8px">clean</span>, auth, SDK-write, event-logic. It caught a real regression in change #3 (non-atomic edge advance could permanently drop a failed event token). <b>Fixed and re-verified.</b></li>
+<li><b>Unit test of the fix</b>: a standalone replica of the log logic exercises the exact partial-failure scenarios (two edges in one cycle, second row fails) — <b>17/17 assertions pass</b>: failed edge is retried, no duplicate row, cursor advances only past landed rows.</li>
+<li><b>Syntax</b>: both files <code>python -m py_compile</code> clean; no dangling references after the rename.</li>
+</ul>
+</div>
+
+<h2>7 · To deploy</h2>
+<div class="card amber">
+<pre>export GEOMIND_APIKEY=&lt;pdo_device_service key — ask Hamed, keep out of git&gt;
+cd raspberry_pi
+python3 monitoring_control.py --http-port 5000 --device-id excavator1 \
+        --dwin-port /dev/serial0 --driver-csv Driver_name_database.xlsx
+<span class="c"># self-test the key first (no lockout risk now):</span>
+python3 geobox_token.py            <span class="c"># uses $GEOMIND_APIKEY</span></pre>
+<p class="kv"><b>Open items (out of scope, noted):</b> (1) <code>--row-interval</code> / <code>last_heartbeat</code> are pre-existing no-ops — the log is change-only, which matches the contract ("write only on state change + init"), so no periodic <code>heartbeat</code> rows are emitted; left as-is intentionally. (2) <code>raspberry_pi/__pycache__/*.pyc</code> are tracked in git — unrelated repo-hygiene item, not changed here.</p>
+</div>
+
+<p class="kv" style="margin-top:24px">Report generated after implementing the GeoMind device-side integration contract (<code>device_team_docs/claude_agent_onboarding.html</code>). Files changed: <code>raspberry_pi/monitoring_control.py</code>, <code>raspberry_pi/geobox_token.py</code>.</p>
+</div>
+</body>
+</html>

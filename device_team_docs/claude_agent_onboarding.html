@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDO Hazard Detection — Claude Agent Onboarding (Device Side)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Inter, system-ui, sans-serif; background: #0d141b; color: #dbe6ef; line-height: 1.55; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 32px 24px 90px; }
+  header.doc { background: linear-gradient(120deg, #072c18, #00843d); border-radius: 14px; padding: 26px 30px; margin-bottom: 26px; }
+  header.doc h1 { font-size: 24px; color: #fff; }
+  header.doc p { color: #d7fbe8; margin-top: 6px; font-size: 14px; }
+  h2 { font-size: 18px; margin: 34px 0 12px; color: #4fe08d; border-bottom: 1px solid #24425c; padding-bottom: 6px; }
+  h3 { font-size: 15px; margin: 16px 0 6px; color: #9adcff; }
+  p, li { font-size: 14px; }
+  ul, ol { margin: 8px 0 8px 22px; }
+  .card { background: #121e29; border: 1px solid #23384c; border-radius: 12px; padding: 16px 18px; margin: 12px 0; }
+  .warn { border-left: 5px solid #da291c; }
+  .ok { border-left: 5px solid #00843d; }
+  .amber { border-left: 5px solid #f5a800; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12.8px; }
+  th { background: #182a3a; text-align: left; padding: 7px 9px; border: 1px solid #29435c; font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: #9adcff; }
+  td { padding: 6px 9px; border: 1px solid #223a50; vertical-align: top; }
+  code { background: #182a3a; border: 1px solid #29435c; border-radius: 4px; padding: 1px 5px; font-family: Consolas, monospace; font-size: 12.3px; color: #ffd9a0; }
+  pre { background: #0a1219; border: 1px solid #23384c; color: #cfe3f2; border-radius: 10px; padding: 13px 15px; overflow-x: auto; font-size: 12.3px; font-family: Consolas, monospace; margin: 10px 0; }
+  pre .c { color: #6f8aa0; }
+  .kv { color: #7f95a8; font-size: 12.3px; }
+  .svgwrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="doc">
+  <h1>Claude Agent Onboarding — PDO AI Hazard Detection (device side)</h1>
+  <p>You are the agent working on the excavator device codebase (ESP_Advanced_Project: ESP32 firmware + Raspberry-Pi <code>monitoring_control.py</code>). This file is the complete contract between your device and the GeoMind cloud + downstream dashboards. Read fully before changing any cloud-facing code.</p>
+</header>
+
+<h2>0 · System map — who writes what, who reads what</h2>
+<div class="card svgwrap">
+<svg viewBox="0 0 960 300" width="100%" style="min-width:840px" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, sans-serif">
+  <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7f95a8"/></marker></defs>
+  <rect x="8" y="100" width="170" height="96" rx="10" fill="#20140a" stroke="#ff7a1a" stroke-width="2"/>
+  <text x="93" y="126" text-anchor="middle" font-size="12.5" font-weight="700" fill="#ffb26e">YOUR DEVICE</text>
+  <text x="93" y="146" text-anchor="middle" font-size="10.5" fill="#c9d6e2">monitoring_control.py</text>
+  <text x="93" y="164" text-anchor="middle" font-size="10.5" fill="#c9d6e2">CloudSync ~5 s · apikey</text>
+  <text x="93" y="182" text-anchor="middle" font-size="10.5" fill="#7f95a8">WRITER</text>
+  <rect x="240" y="16" width="250" height="268" rx="10" fill="#0d2320" stroke="#0e8f83" stroke-width="2"/>
+  <text x="365" y="40" text-anchor="middle" font-size="12.5" font-weight="700" fill="#5fd6c8">GEOMIND · pdo.excavator</text>
+  <rect x="254" y="52" width="222" height="44" rx="6" fill="#122d28" stroke="#ff7a1a"/>
+  <text x="365" y="70" text-anchor="middle" font-size="11" font-weight="600" fill="#ffd9a0">excavator1_status #66534</text>
+  <text x="365" y="86" text-anchor="middle" font-size="9.5" fill="#9fb3c8">you write · panel + bridge read · target_depth is read BACK</text>
+  <rect x="254" y="102" width="222" height="36" rx="6" fill="#122d28" stroke="#ff7a1a"/>
+  <text x="365" y="118" text-anchor="middle" font-size="11" font-weight="600" fill="#ffd9a0">excavator1_log / _sessions</text>
+  <text x="365" y="132" text-anchor="middle" font-size="9.5" fill="#9fb3c8">you append · bridge copies w/ id-cursor</text>
+  <rect x="254" y="144" width="222" height="36" rx="6" fill="#122d28" stroke="#ff7a1a"/>
+  <text x="365" y="160" text-anchor="middle" font-size="11" font-weight="600" fill="#ffd9a0">files alarm_*.jpg + attachments</text>
+  <text x="365" y="174" text-anchor="middle" font-size="9.5" fill="#9fb3c8">you upload+attach · web app gallery reads</text>
+  <rect x="254" y="186" width="222" height="88" rx="6" fill="#122d28" stroke="#00843d"/>
+  <text x="365" y="204" text-anchor="middle" font-size="11" font-weight="600" fill="#8ff0b4">FLEET (ours — don't write)</text>
+  <text x="365" y="222" text-anchor="middle" font-size="9.8" fill="#9fb3c8">pdo_fleet (18 machines, EXC-01 = you)</text>
+  <text x="365" y="238" text-anchor="middle" font-size="9.8" fill="#9fb3c8">pdo_fleet_log · pdo_sessions · pdo_events</text>
+  <text x="365" y="254" text-anchor="middle" font-size="9.8" fill="#9fb3c8">pdo_workers · zones · pipes · permits · sites</text>
+  <text x="365" y="270" text-anchor="middle" font-size="9.8" fill="#9fb3c8">+ 25 saved SQL queries pdo_q2_*</text>
+  <rect x="550" y="60" width="170" height="80" rx="10" fill="#0f2415" stroke="#00843d" stroke-width="2"/>
+  <text x="635" y="86" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8ff0b4">BRIDGE (ours)</text>
+  <text x="635" y="106" text-anchor="middle" font-size="10" fill="#c9d6e2">live_sim.py --bridge-only</text>
+  <text x="635" y="122" text-anchor="middle" font-size="10" fill="#c9d6e2">20 s tick · apikey</text>
+  <rect x="550" y="170" width="170" height="80" rx="10" fill="#0f2415" stroke="#00843d" stroke-width="2"/>
+  <text x="635" y="196" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8ff0b4">BFF (ours)</text>
+  <text x="635" y="216" text-anchor="middle" font-size="10" fill="#c9d6e2">FastAPI :8010 · apikey</text>
+  <text x="635" y="232" text-anchor="middle" font-size="10" fill="#c9d6e2">tiles/frames/query proxy</text>
+  <rect x="780" y="115" width="165" height="76" rx="10" fill="#0f2415" stroke="#00843d" stroke-width="2"/>
+  <text x="862" y="141" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8ff0b4">REACT WEB APP</text>
+  <text x="862" y="161" text-anchor="middle" font-size="10" fill="#c9d6e2">polls 6–10 s</text>
+  <text x="862" y="177" text-anchor="middle" font-size="10" fill="#c9d6e2">gauges·tables·map·gallery</text>
+  <line x1="178" y1="148" x2="250" y2="120" stroke="#7f95a8" stroke-width="2" marker-end="url(#m)"/>
+  <line x1="490" y1="100" x2="546" y2="100" stroke="#7f95a8" stroke-width="2" marker-end="url(#m)"/>
+  <line x1="550" y1="120" x2="490" y2="210" stroke="#7f95a8" stroke-width="2" marker-end="url(#m)"/>
+  <line x1="490" y1="210" x2="546" y2="210" stroke="#7f95a8" stroke-width="2" marker-end="url(#m)"/>
+  <line x1="720" y1="210" x2="776" y2="160" stroke="#7f95a8" stroke-width="2" marker-end="url(#m)"/>
+</svg>
+</div>
+
+<h2>1 · Auth — API key ONLY (critical)</h2>
+<div class="card warn">
+<p><b>This account allows ONE password session at a time.</b> A password login from your code evicts the human portal user AND your own long-running process gets revoked when anyone else logs in (<code>AuthenticationError: Session has been revoked</code>). All machine access must use the session-less API key <b><code>pdo_device_service</code></b> (value supplied out-of-band by Hamed; keep in env/secret store, never in git or logs).</p>
+<pre><span class="c"># SDK (pip install geobox — the GeoMind python SDK)</span>
+from geobox import GeoboxClient
+client = GeoboxClient(host="https://app.geo-mind.ai", apikey=APIKEY, verify=False)
+<span class="c"># NOTE: client.access_token is None in apikey mode — for raw HTTP use ?apikey=</span>
+
+<span class="c"># raw REST</span>
+requests.get(f"https://app.geo-mind.ai/v1/files/{uuid}/download/?apikey={APIKEY}", verify=False)</pre>
+<p class="kv">Verified working with the key on this tenant: feature read/update, table create_row, file upload/download, attachments, saved-query exec, vector tiles. Password flow (<code>POST /v1/auth/token/</code>, form-urlencoded, no captcha) exists as last-resort only.</p>
+</div>
+
+<h2>2 · Your write contract (do not break)</h2>
+
+<h3>2.1 excavator1_status — the live feature (layer #66534, ONE Point feature)</h3>
+<div class="card">
+<table>
+<tr><th>Property</th><th>Type</th><th>Meaning / rule</th></tr>
+<tr><td>current_depth</td><td>Float (m)</td><td>bucket-tip depth = L1·sin(boom)+L2·sin(stick)</td></tr>
+<tr><td>target_depth</td><td>Float (m)</td><td><b>READ BACK from the feature before each write</b> — operators edit it in the portal; it is the permitted depth that drives your over-dig alarm and our gauges</td></tr>
+<tr><td>driver / rfid_uid / driver_present</td><td>Str / Str / Int 0-1</td><td>from the RFID reader; unknown UID → "Unknown Driver", present=0</td></tr>
+<tr><td>over_dig_alarm · sensor_alarm · hse_alarm</td><td>Int 0/1</td><td>your latched flags (over-dig hysteresis 0.05 m; sensor = stale&gt;1.5 s or mpu fail; hse = camera person-in-zone dwell ≥3 s, 30 s link fail-safe)</td></tr>
+<tr><td>last_alarm_picture</td><td>Str</td><td>filename of newest uploaded HSE photo</td></tr>
+<tr><td>updated_at</td><td>Str ISO-8601 UTC</td><td>stamp every write — dashboards use it as your heartbeat</td></tr>
+</table>
+<pre><span class="c"># update pattern (SDK requires geometry on Feature.update — send full payload, srid=4326)</span>
+layer = client.get_vector_by_name("excavator1_status")   <span class="c"># resolve by NAME (uuids can rotate)</span>
+feat  = layer.get_features(geojson=False, limit=3)[0]
+props = dict(feat.properties); props.update(new_values); props["updated_at"] = iso_now()
+tgt   = props.get("target_depth")            <span class="c"># ← the read-back loop</span>
+feat.update({"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [lon, lat]},   <span class="c"># WGS84</span>
+             "properties": props}, srid=4326)</pre>
+</div>
+
+<h3>2.2 excavator1_log — change-only history rows</h3>
+<div class="card">
+<p>Columns: <code>ts, driver, depth, target_depth, over_dig_alarm, sensor_alarm, hse_alarm, lat, lon, event</code>. Write ONLY on state change (plus <code>init</code> at startup). Event enum (the bridge and dashboards parse these exact strings):</p>
+<p><code>init</code> · <code>heartbeat</code> · <code>over_dig_on</code>/<code>over_dig_off</code> · <code>sensor_alarm_on</code>/<code>sensor_alarm_off</code> · <code>hse_on</code>/<code>hse_off</code> · <code>driver_change</code></p>
+<pre>table = client.get_table_by_name("excavator1_log")
+table.create_row(ts=iso_now(), driver=driver, depth=depth, target_depth=tgt,
+                 over_dig_alarm=0, sensor_alarm=0, hse_alarm=1,
+                 lat=lat, lon=lon, event="hse_on")</pre>
+</div>
+
+<h3>2.3 excavator1_sessions — RFID driver sessions</h3>
+<div class="card">
+<p>Columns: <code>driver, rfid_uid, date, start_time, end_time, total_alarms, hse_alarm_count, over_dig_alarm_count</code>. One row per completed session (close on driver change / shutdown; keep the open session in local state across restarts as you do now).</p>
+</div>
+
+<h3>2.4 HSE photos</h3>
+<div class="card ok">
+<pre>f = client.upload_file("alarm_20260705_101530.jpg")          <span class="c"># name MUST start with alarm_</span>
+layer.create_attachment(name=f.name[:50], loc_x=lon, loc_y=lat,
+                        file=f, feature=feat,
+                        display_name="HSE evidence", description="person in zone")
+props["last_alarm_picture"] = f.name                          <span class="c"># then save the feature</span></pre>
+<p>Downstream (automatic, nothing for you to do): the web app lists your attachments via <code>/v1/attachments/?resource_type=vector&amp;resource_uuid=&lt;status layer&gt;</code>, shows the newest 6 in the EXC-01 gallery with a DEVICE UPLOAD badge, full-res lightbox via its <code>/api/frame/&lt;file_uuid&gt;</code> proxy.</p>
+</div>
+
+<h2>3 · What happens downstream (read-side contracts you must not break)</h2>
+<div class="card">
+<ul>
+<li><b>Bridge</b> (<code>live_sim.py</code>, ours): every 20 s copies your status feature into <code>pdo_fleet</code> WHERE mid='EXC-01' (field mapping: current_depth→depth_m, target_depth→target_depth_m, + derived boom/stick angles and status), and copies NEW <code>excavator1_log</code>/<code>_sessions</code> rows (row-id cursor) into <code>pdo_fleet_log</code>/<code>pdo_sessions</code> with mid='EXC-01'. Renaming your columns/events breaks this mapping.</li>
+<li><b>Saved queries</b> (<code>pdo_q2_*</code>) power every dashboard table/gauge; several take a machine param <code>m</code>. Executed via <code>POST /v1/queries/exec/</code> (the SDK's Query.execute() cannot override params).</li>
+<li><b>Map tiles are cache-only on this account</b> (live tile renderer 500s). Feature writes are invisible on MAPS until a cache reseed — the bridge reseeds each tick: <pre>POST /v1/vectorLayers/&lt;uuid&gt;/cache/seed/?apikey=…
+{"from_zoom": 0, "to_zoom": 14, "ignore_cache": true, "workers": 2, "user_id": 12455}</pre> JSON/table reads are always fresh; only rendered dots lag.</li>
+</ul>
+</div>
+
+<h2>4 · Adding MORE real devices later (EXC-02…)</h2>
+<div class="card amber">
+<p>Two options, in order of preference:</p>
+<ol>
+<li><b>Same pattern, new names</b>: provision <code>excavator2_status/_log/_sessions</code> exactly like device 1 and tell Hamed — the bridge gains a second cursor block (5-line change on our side). Your firmware stays identical apart from <code>--device-id excavator2</code>.</li>
+<li><b>Direct-to-fleet</b> (skips the bridge): update the <code>pdo_fleet</code> feature WHERE mid='EXC-02' + append <code>pdo_fleet_log</code>/<code>pdo_sessions</code> rows with a <code>mid</code> column. Schemas: fleet = your status fields renamed (<code>depth_m, target_depth_m</code>) + identity fields; log = your log + <code>mid</code>. Resolve layer uuids by NAME at startup (<code>get_vector_by_name("pdo_fleet")</code>) — <b>uuids rotate when we re-provision.</b> Coordinate with Hamed before writing to fleet resources.</li>
+</ol>
+</div>
+
+<h2>5 · Platform gotchas (will bite you; all verified on this tenant)</h2>
+<div class="card">
+<table>
+<tr><th style="width:44%">Gotcha</th><th>Rule</th></tr>
+<tr><td>Single password session</td><td>API key for anything long-running. Catch <code>AuthenticationError</code> by TYPE and reconnect if you must use passwords.</td></tr>
+<tr><td>Feature.update KeyError 'geometry'</td><td>Always send full Feature payload with geometry, <code>srid=4326</code> (lon/lat).</td></tr>
+<tr><td><code>get_features(geojson=True)</code></td><td>Ignores <code>limit</code>, silently truncates at 100 rows. Use <code>geojson=False, limit=10000, skip_geometry=True</code>.</td></tr>
+<tr><td>Geometry CRS</td><td>Stored EPSG:3857; write with srid=4326; reads return metres — use lat/lon PROPERTIES for positions.</td></tr>
+<tr><td>Polygon / Polyline layers</td><td>Features must be MultiPolygon / MultiLineString (plain Polygon/LineString rejected). Points are plain Point.</td></tr>
+<tr><td>SQL identifiers</td><td><code>false</code>/<code>true</code> inside a column name breaks the parser (we renamed <code>false_positive</code>→<code>is_false_alarm</code>); no quoted identifiers.</td></tr>
+<tr><td>List endpoints</td><td><code>GET /v1/vectorLayers/</code> and <code>/v1/files/</code> cap at ~10 items and ignore paging — always resolve by name/uuid, never trust lists.</td></tr>
+<tr><td>Attachments list</td><td><code>/v1/attachments/</code> REQUIRES <code>resource_type</code> + <code>resource_uuid</code> query params (else a 422 that looks like an empty list).</td></tr>
+<tr><td>Table rows read</td><td><code>/v1/tables/&lt;uuid&gt;/rows/?skip=0&amp;limit=N</code> — the <code>page</code>/<code>order_by</code> params can 500.</td></tr>
+<tr><td>String field widths</td><td>Default String width is short — long values need the field created with <code>data={"width": N}</code>.</td></tr>
+</table>
+</div>
+
+<h2>6 · Self-verification recipes (run these to prove your writes landed)</h2>
+<div class="card ok">
+<pre><span class="c"># 1. status heartbeat fresh?</span>
+curl -sk "https://app.geo-mind.ai/v1/vectorLayers/&lt;status_uuid&gt;/features/?limit=1&amp;out_srid=4326&amp;apikey=$KEY" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['features'][0]['properties']['updated_at'])"
+
+<span class="c"># 2. newest log rows</span>
+curl -sk "https://app.geo-mind.ai/v1/tables/&lt;log_uuid&gt;/rows/?skip=0&amp;limit=5&amp;apikey=$KEY"
+
+<span class="c"># 3. photo attached?</span>
+curl -sk "https://app.geo-mind.ai/v1/attachments/?resource_type=vector&amp;resource_uuid=&lt;status_layer_uuid&gt;&amp;page=1&amp;page_size=3&amp;apikey=$KEY"
+
+<span class="c"># 4. end-to-end: the web app's own view of your machine (ask Hamed for app password)</span>
+curl -s -c c.txt -X POST http://&lt;app-host&gt;:8010/api/login -H 'Content-Type: application/json' -d '{"password":"…"}'
+curl -s -b c.txt http://&lt;app-host&gt;:8010/api/machine/EXC-01 | python3 -m json.tool | head -40</pre>
+</div>
+
+<h2>7 · Test-day sequence (mirror of the engineer guide)</h2>
+<div class="card">
+<ol>
+<li>Device on, apikey auth, sync OK → verify recipe #1.</li>
+<li>Hamed runs the bridge (<code>--bridge-only</code>) — your data only, no simulated machines.</li>
+<li>Dig cycle → depth gauge (≤30 s). RFID swap → driver + session row. Person in zone ≥3 s → hse_on + photo in gallery. Portal edit of target_depth → your cab display follows (read-back loop).</li>
+</ol>
+<p class="kv">Latency chain: device ≤5 s → bridge ≤20 s → UI poll ≤6 s. Map dots +~10 s (tile cache).</p>
+</div>
+
+<p class="kv" style="margin-top:24px">AMAN · GeoMind — PDO AI Hazard Detection. Companion file for humans: device_engineer_guide.html.</p>
+</div>
+</body>
+</html>

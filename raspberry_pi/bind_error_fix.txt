@@ -1,0 +1,50 @@
+Why "Cannot assign requested address" crashes control_monitoring.py
+====================================================================
+
+ERROR (fatal, stops the program):
+    Cannot assign requested address
+
+ROOT CAUSE
+----------
+monitoring_control.py, line 1447 + 1560:
+
+    ap.add_argument("--http-host", default="192.168.100.43")   # 1447
+    ...
+    app.run(host=args.http_host, port=args.http_port, threaded=True)   # 1560
+
+Flask tries to bind 192.168.100.43:5000. That IP is NOT currently
+assigned to any network interface on the Pi, so the kernel rejects the
+bind with EADDRNOTAVAIL ("Cannot assign requested address") and the
+program stops.
+
+A socket can only bind to an IP the machine actually owns. The Pi's
+DHCP address changed (or it is on a different subnet / not on that LAN).
+
+Proof: the HSE socket server binds 0.0.0.0:5050 (line 1502) and it
+started fine ("waiting for camera client on 0.0.0.0:5050"). Only the
+hardcoded-IP HTTP server died.
+
+CHECK THE PI'S REAL IP
+----------------------
+    hostname -I
+
+FIX NOW (no code change)
+------------------------
+    python control_monitoring.py --http-host 0.0.0.0
+
+0.0.0.0 = listen on all interfaces; works whatever IP DHCP hands out.
+The ESP32 units still POST to the Pi's real IP; the server accepts on
+any interface.
+
+PERMANENT FIX
+-------------
+Change the default on line 1447 from "192.168.100.43" to "0.0.0.0"
+(matching the HSE server). A hardcoded IP breaks every time DHCP
+assigns a new address.
+
+THE OTHER TWO LINES ARE NON-FATAL (not the crash)
+-------------------------------------------------
+- "Driver_name_database.xlsx ... No such file" : local fallback file is
+  missing; the cloud copy loads instead.
+- "DWIN not responding" : UART wiring / baud / /dev/serial0. Separate
+  issue, does not stop the program.
