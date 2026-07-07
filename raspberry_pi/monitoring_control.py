@@ -133,8 +133,8 @@ VP_DEPTH_OFFSET = 0x1000
 OFFSET_TRIGGER  = 0x00FF
 
 # Page 2 (panel -> Pi, auto-upload)
-VP_BEAM_LEN  = 0x0012      # beam length, TEXT (metres)
-VP_STICK_LEN = 0x2000      # stick length, TEXT (metres) -- 0x2000 in the CURRENT DGUS
+VP_BEAM_LEN  = 0x0012      # beam length, TEXT (mm)
+VP_STICK_LEN = 0x2000      # stick length, TEXT (mm) -- 0x2000 in the CURRENT DGUS
                            # project (operator-confirmed 2026-07-06; older compiled
                            # bins used 0x0016). If stick edits are ignored, re-check
                            # this VP + its data-auto-upload flag in the panel.
@@ -485,16 +485,15 @@ def decode_text(data):
     return bytes(out).decode("ascii", "replace").strip()
 
 
-def parse_length_m(text):
-    """Extract a length in METRES from a DGUS TEXT field value.
+def parse_length_mm(text):
+    """Extract a length in millimetres from a DGUS TEXT field value.
 
-    The beam/stick length VPs are TEXT inputs and the HMI field is labelled in
-    METRES, so the panel auto-uploads a metres string (already decoded by
-    decode_text). Be liberal about what the keypad may send -- keep only digits,
-    a single decimal dot and a leading '-'; ignore spaces, a unit suffix ('m')
-    and stray separators (so '6.5', ' 6.5 ', '6.5 m' and '6,5' all read as 6.5).
-    Returns a float in METRES, or None if the text holds no number.
-    NOTE: the value is metres, NOT millimetres -- do NOT divide by 1000.
+    The beam/stick length VPs are TEXT inputs: the panel auto-uploads the value
+    as an ASCII string (already decoded by decode_text). Be liberal about what
+    the keypad may send -- keep only digits, a single decimal dot and a leading
+    '-'; ignore spaces, a unit suffix ('mm') and stray separators (so '1100',
+    ' 1100 ', '1100 mm' and '1,100' all read as 1100). Returns a float (mm), or
+    None if the text holds no number.
     """
     cleaned, seen_dot = [], False
     for ch in (text or ""):
@@ -531,20 +530,9 @@ class HmiController:
         with _lock:
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
         # Latest value the panel pushed for each settings VP (seeded from disk).
-        self.cache = self._disk_cache()
-
-    def _disk_cache(self):
-        """The settings fields as last SAVED to disk (the working-copy baseline).
-
-        Beam/stick are stored as the raw METRES text the operator typed. The
-        legacy key names (`*_len_mm`) are still read as a fallback so an old
-        state file keeps working -- the stored string ('6.5') is identical
-        regardless of how the code once interpreted the unit."""
-        return {
-            VP_BEAM_LEN:  str(_persist.get("beam_len_m",
-                                           _persist.get("beam_len_mm", ""))),
-            VP_STICK_LEN: str(_persist.get("stick_len_m",
-                                           _persist.get("stick_len_mm", ""))),
+        self.cache = {
+            VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
+            VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
             VP_SSID:      str(_persist.get("wifi_ssid", "")),
             VP_PASSWORD:  str(_persist.get("wifi_password", "")),
         }
@@ -573,25 +561,16 @@ class HmiController:
             self._cancel()
             return
         if addr in SETTINGS_VPS:                     # text field auto-uploaded
-            raw = event_bytes(ev)
-            text = decode_text(raw)
+            text = decode_text(event_bytes(ev))
             self.cache[addr] = text
-            # Log the FULL frame so 'what did the HMI send' is never a guess:
-            # decoded text + the numeric word + the raw payload bytes. If a
-            # length field is actually a NUMERIC data-variable (not TEXT), the
-            # text decodes empty here but value/bytes still show the number.
-            if addr == VP_PASSWORD:                  # never print the password
-                print(f"[hmi] recv 0x{addr:04X} = '{'*' * len(text)}' "
-                      f"(password, {len(text)} chars)", flush=True)
-            else:
-                print(f"[hmi] recv 0x{addr:04X} = '{text}' "
-                      f"(value=0x{ev.value:04X} bytes={raw.hex()})", flush=True)
+            shown = text if addr != VP_PASSWORD else "*" * len(text)
+            print(f"[hmi] recv 0x{addr:04X} = '{shown}'", flush=True)
             # Beam/stick: apply to the LIVE geometry so depth reflects it at once,
             # but do NOT persist -- SAVE writes to disk, BACK reverts (working vs
             # saved copy). ssid/pw are just cached until SAVE.
             if addr in (VP_BEAM_LEN, VP_STICK_LEN):
                 which = "BEAM" if addr == VP_BEAM_LEN else "STICK"
-                print(f"[hmi] {which} LENGTH read from HMI: '{text}' m", flush=True)
+                print(f"[hmi] {which} LENGTH read from HMI: '{text}' mm", flush=True)
                 if text:
                     self._apply_length_live(addr, text)
             # Confirm EVERY settings input with a 1-second beep (spec).
@@ -611,7 +590,12 @@ class HmiController:
         self.in_settings = True
         with _lock:
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
-            self.cache = self._disk_cache()
+            self.cache = {
+                VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
+                VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
+                VP_SSID:      str(_persist.get("wifi_ssid", "")),
+                VP_PASSWORD:  str(_persist.get("wifi_password", "")),
+            }
             ssid = self.cache[VP_SSID]
         try:                                         # show the current SSID
             put_text(self.dwin, VP_SSID, ssid, SSID_LEN, ack=False)
@@ -642,54 +626,43 @@ class HmiController:
 
     def _apply_length_live(self, addr, text):
         """Apply a beam/stick length to the LIVE geometry so depth updates
-        immediately. The VP is a TEXT field labelled in METRES, so `text` is the
-        decoded string (e.g. '6.5' or '6.5 m'); parse_length_m returns metres
-        directly -- NO mm->m scaling. Persisting waits for SAVE; BACK reverts.
-        Junk is ignored."""
+        immediately. The VP is a TEXT field, so `text` is the decoded string
+        (e.g. '1100' or '1100 mm'); parse_length_mm pulls the number out
+        (mm -> m). Persisting waits for SAVE; BACK reverts. Junk is ignored."""
         which = "beam (L1)" if addr == VP_BEAM_LEN else "stick (L2)"
-        metres = parse_length_m(text)
-        if metres is None:
+        mm = parse_length_mm(text)
+        if mm is None:
             print(f"[hmi] {which} length text {text!r} has no number -- ignored",
                   flush=True)
             return
+        metres = mm / 1000.0
         with _lock:
             if addr == VP_BEAM_LEN:
                 cfg["L1"] = metres
             else:
                 cfg["L2"] = metres
-        print(f"[hmi] {which} length applied LIVE: {metres:.3f} m "
+        print(f"[hmi] {which} length applied LIVE: {mm:.0f} mm ({metres:.3f} m) "
               f"-- not saved until SAVE", flush=True)
 
     def _save(self):
         """SAVE button: persist the working copy (geometry + Wi-Fi) to disk and
-        make it the new saved baseline, then return to the main page. Every
-        field the HMI sent is logged (raw text + parsed metres + resulting
-        geometry) so the log is a full record of what the panel saved."""
+        make it the new saved baseline, then return to the main page."""
         beam = self.cache.get(VP_BEAM_LEN, "")
         stick = self.cache.get(VP_STICK_LEN, "")
         ssid = self.cache.get(VP_SSID, "")
         pw = self.cache.get(VP_PASSWORD, "")
-        bm, sm = parse_length_m(beam), parse_length_m(stick)   # TEXT metres -> float
+        print(f"[hmi] SAVE beam={beam!r}mm stick={stick!r}mm "
+              f"ssid={ssid!r} pw={'*' * len(pw)}", flush=True)
+        bmm, smm = parse_length_mm(beam), parse_length_mm(stick)   # TEXT -> mm
         with _lock:                                  # keep geometry in sync w/ text
-            if bm is not None:
-                cfg["L1"] = bm
-            if sm is not None:
-                cfg["L2"] = sm
-            _persist.update(beam_len_m=beam, stick_len_m=stick,
+            if bmm is not None:
+                cfg["L1"] = bmm / 1000.0
+            if smm is not None:
+                cfg["L2"] = smm / 1000.0
+            _persist.update(beam_len_mm=beam, stick_len_mm=stick,
                             wifi_ssid=ssid, wifi_password=pw)
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]   # new baseline
-            l1, l2 = cfg["L1"], cfg["L2"]
-        print("[hmi] SAVE from HMI -- persisting these fields to disk:", flush=True)
-        print(f"[hmi]   beam  text={beam!r} -> L1={l1:.3f} m"
-              f"{'' if bm is not None else '   (no number: kept previous L1)'}",
-              flush=True)
-        print(f"[hmi]   stick text={stick!r} -> L2={l2:.3f} m"
-              f"{'' if sm is not None else '   (no number: kept previous L2)'}",
-              flush=True)
-        print(f"[hmi]   wifi_ssid={ssid!r}  wifi_password={'*' * len(pw)} "
-              f"({len(pw)} chars)", flush=True)
         save_state()
-        print(f"[hmi] SAVED to {_state_path}", flush=True)
         # Wi-Fi SSID/pw are persisted to the state file ONLY (operator choice). To
         # actually switch the Pi's network, apply ssid/pw to NetworkManager /
         # wpa_supplicant here.
@@ -704,7 +677,12 @@ class HmiController:
         values (spec)."""
         with _lock:                                  # revert live geometry + cache
             cfg["L1"], cfg["L2"] = self.saved_L1, self.saved_L2
-            self.cache = self._disk_cache()
+            self.cache = {
+                VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
+                VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
+                VP_SSID:      str(_persist.get("wifi_ssid", "")),
+                VP_PASSWORD:  str(_persist.get("wifi_password", "")),
+            }
             beam, stick, ssid = (self.cache[VP_BEAM_LEN],
                                  self.cache[VP_STICK_LEN], self.cache[VP_SSID])
         try:                                         # revert the on-screen fields
@@ -1722,9 +1700,9 @@ def main():
     ap.add_argument("--hse-vp", type=lambda x: int(x, 0), default=VP_HSE_ALARM,
                     help="VP for the HSE/person alarm flag (default 0x0400)")
     # equipment home location -- the map marker sits here until a live GNSS fix
-    ap.add_argument("--home-lat", type=float, default=23.5900,
+    ap.add_argument("--home-lat", type=float, default=23.6100,
                     help="fallback latitude for the map marker (default: Muscat, Oman)")
-    ap.add_argument("--home-lon", type=float, default=58.4059,
+    ap.add_argument("--home-lon", type=float, default=58.42,
                     help="fallback longitude for the map marker (default: Muscat, Oman)")
     # camera HSE alarm link (TCP socket from ezviz_camera/rpi_person_zone_alarm.py)
     ap.add_argument("--hse-host", default="0.0.0.0",
