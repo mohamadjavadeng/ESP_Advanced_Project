@@ -38,7 +38,7 @@ def main():
     # NOTE: the username is 'pdo.excavator'. 'PDO@excavator1' is the PASSWORD --
     # using it as the username burns a failed login (lockout risk).
     ap.add_argument("--user", default="pdo.excavator")
-    ap.add_argument("--pass", dest="password", default=os.environ.get("GEOMIND_PASS"))
+    ap.add_argument("--pass", dest="password", default="PDO@excavator1")
     ap.add_argument("--apikey", default=os.environ.get("GEOMIND_APIKEY")
                     or os.environ.get("PDO_DEVICE_APIKEY"),
                     help="authenticate with an API key instead of user/password "

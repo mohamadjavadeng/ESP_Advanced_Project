@@ -77,8 +77,8 @@ def count_people(model, frame, conf):
 def main():
     ap = argparse.ArgumentParser(
         description="EZVIZ H8c headless person detector (Raspberry Pi)")
-    ap.add_argument("--ip", default="192.168.100.13", help="camera IP")
-    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "NANXJW"),
+    ap.add_argument("--ip", default="192.168.100.67", help="camera IP")
+    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "Aman2026"),
                     help="camera RTSP password / verification code "
                          "(or set EZVIZ_CODE env var)")
     ap.add_argument("--main", action="store_true",

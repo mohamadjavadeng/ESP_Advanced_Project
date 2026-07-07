@@ -395,8 +395,8 @@ class AlarmLink:
 def main():
     ap = argparse.ArgumentParser(
         description="Person-in-zone intrusion alarm (YOLOv4-tiny / cv2.dnn, Pi 4B)")
-    ap.add_argument("--ip", default="192.168.100.13", help="camera IP")
-    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "NANXJW"),
+    ap.add_argument("--ip", default="192.168.100.67", help="camera IP")
+    ap.add_argument("--code", default=os.environ.get("EZVIZ_CODE", "Aman2026"),
                     help="RTSP password / verification code (or set EZVIZ_CODE)")
     ap.add_argument("--main", action="store_true",
                     help="use main (HD) stream; default sub (low-res, faster)")
