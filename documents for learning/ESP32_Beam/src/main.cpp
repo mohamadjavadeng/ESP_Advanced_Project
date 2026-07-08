@@ -39,7 +39,7 @@ const char *WIFI_SSID = "AMAN 2";        // 4G modem SSID (note the space)
 const char *WIFI_PASS = "AMAN2018";
 // Raspberry Pi address on that WiFi + the receiver endpoint (sensor_receiver.py).
 // Reserve a static lease for the Pi on the router so this never changes.
-const char     *RPI_HOST    = "192.168.100.60";
+const char     *RPI_HOST    = "10.118.136.50";
 // const char     *RPI_HOST    = "192.168.0.110";
 const uint16_t  RPI_PORT    = 5000;
 const char     *INGEST_PATH = "/ingest";
