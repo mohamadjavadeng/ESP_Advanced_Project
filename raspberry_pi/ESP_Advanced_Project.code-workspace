@@ -4,8 +4,8 @@
 			"path": ".."
 		},
 		{
-			"name": "ESP32_Beam",
-			"path": "../documents for learning/ESP32_Beam"
+			"name": "ESP32_Stick",
+			"path": "../documents for learning/ESP32_Stick"
 		}
 	],
 	"settings": {
