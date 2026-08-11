@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Beam &amp; Stick — on-device web config portal</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow-x:hidden}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 90px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--dim);font-size:17px;margin:0 0 26px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:16px;border-top:1px solid var(--line);
+     letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px;letter-spacing:.01em}
+  h2 .num{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:var(--code);color:var(--codefg);padding:1px 5px;border-radius:4px}
+  pre{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre code{background:none;padding:0;font-size:inherit}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    font-weight:700;white-space:nowrap}
+  tbody tr:hover{background:var(--card)}
+  td code{white-space:nowrap}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin:16px 0}
+  .note,.warn,.ok{border-left:4px solid;border-radius:8px;padding:12px 15px;margin:16px 0}
+  .note{border-color:var(--acc);background:var(--acc-bg)}
+  .warn{border-color:var(--warn);background:var(--warn-bg)}
+  .ok{border-color:var(--ok);background:var(--ok-bg)}
+  .note b,.warn b,.ok b{letter-spacing:.01em}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;
+    padding:2px 8px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+  .t-new{background:var(--ok-bg);color:var(--ok)}
+  .t-mod{background:var(--warn-bg);color:var(--warn)}
+  .t-none{background:var(--code);color:var(--dim)}
+  ol,ul{margin:10px 0;padding-left:24px}
+  li{margin:6px 0}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .flow{display:grid;gap:0;margin:18px 0;font-size:14px}
+  .step{display:grid;grid-template-columns:88px 1fr;gap:14px;padding:10px 0;
+    border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:0}
+  .who{font-weight:700;color:var(--acc);font-size:12.5px;text-transform:uppercase;
+    letter-spacing:.05em;padding-top:2px}
+  .who.pi{color:var(--ok)}
+  kbd{background:var(--kbd);border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:inherit;font-weight:600}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;column-gap:28px}
+  @media (max-width:620px){.toc ol{columns:1}}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+  a{color:var(--acc)}
+  .small{font-size:13.5px;color:var(--dim)}
+  hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+  .fig{font-size:13px;color:var(--dim);margin-top:-8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>ESP32 Beam &amp; Stick — on-device web config portal</h1>
+<p class="lede">Each unit now publishes its own Wi-Fi network and a web page. Connect
+to it with a phone, read the live angle (and the GNSS fix on the stick), and type
+the field Wi-Fi credentials, the Raspberry Pi address and the length of the arm
+that unit is bolted to. The length is handed to the Pi <b>once</b> and confirmed.</p>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#what">What you can do now</a></li>
+    <li><a href="#changed">Every file I changed</a></li>
+    <li><a href="#flash">Build &amp; flash</a></li>
+    <li><a href="#provision">Provision a unit (step by step)</a></li>
+    <li><a href="#page">The web page, field by field</a></li>
+    <li><a href="#length">The one-shot length hand-off</a></li>
+    <li><a href="#pi">Raspberry Pi side</a></li>
+    <li><a href="#api">HTTP API reference</a></li>
+    <li><a href="#verify">Verification checklist</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#limits">Limits &amp; things to know</a></li>
+  </ol>
+</div>
+
+<h2 id="what"><span class="num">1</span>What you can do now</h2>
+
+<p>Nothing about the depth system's behaviour changed: both units still POST raw
+angles to the Pi, the stick still posts its GNSS fix, and the Pi still owns the
+geometry and computes <code>depth = L1·sin(boom) + L2·sin(stick)</code>. What is new is
+that <b>each unit is also a web server</b>, always, on its own access point.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>BEAM unit</th><th>STICK unit</th></tr></thead>
+  <tbody>
+    <tr><td><b>Wi-Fi network it publishes</b></td><td><code>EXCAV-BEAM</code></td><td><code>EXCAV-STICK</code></td></tr>
+    <tr><td><b>Password</b></td><td><code>excav1234</code></td><td><code>excav1234</code></td></tr>
+    <tr><td><b>Web page</b></td><td><code>http://192.168.4.1/</code></td><td><code>http://192.168.5.1/</code></td></tr>
+    <tr><td><b>Also reachable as</b></td><td><code>http://beam.local/</code></td><td><code>http://stick.local/</code></td></tr>
+    <tr><td><b>Device id sent to the Pi</b></td><td><code>beam</code> → sets <code>L1</code></td><td><code>stick</code> → sets <code>L2</code></td></tr>
+    <tr><td><b>Live data on the page</b></td><td>roll / pitch / yaw, MPU state, links, uptime, heap</td><td>the same <b>+ GNSS</b> fix, lat/lon, satellites, altitude, accuracy, speed, map link</td></tr>
+    <tr><td><b>Factory default length</b></td><td>1100 mm</td><td>1000 mm</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note"><b>Why an access point and not just the field Wi-Fi?</b> The radio runs
+in <code>WIFI_AP_STA</code> mode, so the unit joins the site router <i>and</i> keeps its own AP
+up at the same time. That means a mistyped Wi-Fi password is never fatal: the AP is
+still there, so you re-open the same page and fix it. No USB cable, no reflash, no
+climbing on the machine with a laptop.</div>
+
+<h2 id="changed"><span class="num">2</span>Every file I changed</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>File</th><th></th><th>What / why</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>ESP32_Beam/src/web_config.h</code><br><code>ESP32_Beam/src/web_config.cpp</code></td>
+      <td><span class="tag t-new">NEW</span></td>
+      <td>The whole portal: NVS storage, the SoftAP, the web server, the page, the
+          JSON API and the one-shot length hand-off. ~700 lines.</td>
+    </tr>
+    <tr>
+      <td><code>ESP32_Stick/src/web_config.h</code><br><code>ESP32_Stick/src/web_config.cpp</code></td>
+      <td><span class="tag t-new">NEW</span></td>
+      <td><b>Byte-identical copies</b> of the two files above. Everything unit-specific
+          arrives through a struct that <code>main.cpp</code> passes in, so when you edit one,
+          copy both files over the other project. Nothing else keeps them in sync.</td>
+    </tr>
+    <tr>
+      <td><code>ESP32_Beam/src/main.cpp</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>Hard-coded <code>WIFI_SSID</code>/<code>RPI_HOST</code> became <code>DEF_*</code> <i>factory defaults</i>; a
+          <code>FIELD_ID</code> block names the AP; <code>setup()</code> calls <code>fieldcfg_begin()</code>;
+          <code>loop()</code> calls <code>fieldcfg_handle()</code> + <code>fieldcfg_sync()</code>; <code>ensureWifi()</code>
+          re-joins when the operator saves credentials; the angle is published to
+          the page; <code>/ingest</code> gained <code>ip</code> + <code>len_seq</code> and its reply is now read.</td>
+    </tr>
+    <tr>
+      <td><code>ESP32_Stick/src/main.cpp</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>The same changes, plus: the GNSS fix is published to the page from
+          <code>postLocation()</code>, and <code>angleTask</code> (which already owns Wi-Fi) is the one
+          task that services the web server — so the config state is never touched
+          from two cores.</td>
+    </tr>
+    <tr>
+      <td><code>ESP32_Beam/platformio.ini</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>Comment only, <b>plus one real fix</b>: <code>lib_extra_dirs</code> pointed at
+          <code>ExcavatorClient/libf</code> — a typo for <code>lib</code>. It built anyway because the
+          local <code>lib/MPU6050</code> wins, which is why nobody noticed.</td>
+    </tr>
+    <tr>
+      <td><code>ESP32_Stick/platformio.ini</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>Comment only (the header said 10 Hz; the firmware posts at 1 Hz).</td>
+    </tr>
+    <tr>
+      <td><code>raspberry_pi/monitoring_control.py</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>New <code>POST /length</code> route; <code>/ingest</code> reads <code>len_seq</code>/<code>ip</code> and can answer
+          <code>need_length</code>; <code>/status</code> gained <code>esp_lengths</code> + <code>L1</code>/<code>L2</code>; the
+          hand-off counter is persisted to the state file; new
+          <code>HmiController.note_external_length()</code> so a DWIN <kbd>BACK</kbd> press cannot
+          undo a length that came from a unit; new <code>--no-esp-length</code> flag.</td>
+    </tr>
+    <tr>
+      <td><code>raspberry_pi/sensor_receiver.py</code></td>
+      <td><span class="tag t-mod">EDITED</span></td>
+      <td>The same <code>/length</code> route, <code>need_length</code> reply and <code>esp_lengths</code> in
+          <code>/status</code>, so the standalone reference receiver still matches the
+          firmware. No persistence here (it keeps the counter in RAM), so it asks
+          each unit for its length once after a restart.</td>
+    </tr>
+    <tr>
+      <td><span class="small">everything else — <code>dwin_lcd.py</code>, the cloud/RFID/camera
+          threads, the DGUS project, <code>partitions.csv</code>, <code>lib/MPU6050</code></span></td>
+      <td><span class="tag t-none">UNTOUCHED</span></td>
+      <td class="small">No new PlatformIO dependency either: <code>WebServer</code>, <code>ESPmDNS</code>
+          and <code>Preferences</code> all ship with the Arduino-ESP32 core.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Cost of the addition</h3>
+<p>Both firmwares still build with room to spare on the 3.75 MB app slot:</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>Firmware</th><th>Flash</th><th>RAM</th></tr></thead>
+  <tbody>
+    <tr><td>ESP32_Beam</td><td>926 945 B — 23.6 % of 3 932 160</td><td>48 920 B — 14.9 %</td></tr>
+    <tr><td>ESP32_Stick</td><td>938 613 B — 23.9 % of 3 932 160</td><td>49 064 B — 15.0 %</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="small">The page itself is 10.2 kB of HTML/CSS/JS held in flash
+(<code>PROGMEM</code>), not RAM.</p>
+
+<h2 id="flash"><span class="num">3</span>Build &amp; flash</h2>
+
+<p>Nothing new to install. From each project folder:</p>
+<pre><code>cd "documents for learning/ESP32_Beam"
+pio run                 # compile
+pio run -t upload        # flash
+pio run -t upload -t monitor   # flash and watch the serial log @115200</code></pre>
+
+<p>Then the same in <code>documents for learning/ESP32_Stick</code>. Both are verified to
+compile clean (no warnings) against the installed Arduino-ESP32 core 2.0.17.</p>
+
+<div class="warn"><b>Careful with <code>pio run -t erase</code>.</b> Erasing the flash also wipes
+the <code>nvs</code> partition, which is where the unit keeps the SSID, password, Pi address
+and arm length. After an erase the unit falls back to the <code>DEF_*</code> constants at the
+top of <code>main.cpp</code> and the length counter goes back to 0 — you have to re-enter
+the length on the web page. A plain <code>pio run -t upload</code> only replaces the app and
+<b>keeps</b> your settings.</div>
+
+<h2 id="provision"><span class="num">4</span>Provision a unit (step by step)</h2>
+
+<ol>
+  <li>Power the unit. Watch the serial log — after ~1 s you get the line that tells
+      you everything:
+      <pre><code>[web] config portal up: SSID 'EXCAV-BEAM' pass 'excav1234' -&gt; http://192.168.4.1/
+      (also http://beam.local/ once on the field wi-fi)
+[web] saved config: field ssid 'A 3'  pi 192.168.0.110:5000  arm length 1100 mm
+      (seq 0, never set on the web page)</code></pre></li>
+  <li>On a phone or laptop, join the Wi-Fi network <b><code>EXCAV-BEAM</code></b> (password
+      <code>excav1234</code>). Your device will warn about "no internet" — that is expected;
+      tell it to stay connected.</li>
+  <li>Open <b><code>http://192.168.4.1/</code></b>. On the stick it is
+      <code>http://192.168.5.1/</code>. The page starts updating once a second.</li>
+  <li>Confirm the <b>Angle</b> card is moving when you tilt the arm, and that
+      <b>MPU6050</b> shows <span class="tag t-new">DMP READY</span>. If it says
+      <i>no data</i>, the sensor is not wired — fix that before anything else.</li>
+  <li>Fill in the <b>Settings</b> card:
+      <ul>
+        <li><b>Field Wi-Fi SSID</b> — the network the Pi is on. Press <b>Scan for
+            networks</b> and pick it from the list to avoid typos (the site SSID
+            <code>A 3</code> has a space in it, which is easy to get wrong by hand).</li>
+        <li><b>Field Wi-Fi password</b> — leave <b>blank</b> to keep the stored one.</li>
+        <li><b>Raspberry Pi IP</b> and <b>Port</b> — the Pi's address on that
+            network, port <code>5000</code> for <code>monitoring_control.py</code>. Reserve a static
+            DHCP lease for the Pi on the router so this never moves.</li>
+        <li><b>Length of the arm THIS unit is bolted to</b>, in millimetres,
+            100–20000. The beam unit's number becomes the Pi's <code>L1</code>, the stick
+            unit's becomes <code>L2</code>.</li>
+      </ul>
+  </li>
+  <li>Press <b>Save &amp; apply</b>. The green <span class="tag t-new">SAVED</span>
+      badge appears with a note of what happened, e.g.
+      <i>"length queued for the Pi (seq 1). re-joining wi-fi 'A 3'."</i></li>
+  <li>Wait a few seconds and check the <b>Links</b> card: <b>field wi-fi</b> should
+      flip to <span class="tag t-new">JOINED</span> with an IP and a signal reading.
+      Then the <b>Arm length → Raspberry Pi</b> card should turn
+      <span class="tag t-new">CONFIRMED BY PI</span>.</li>
+  <li>Repeat for the other unit on its own AP. Do not skip this: the beam and the
+      stick each store <b>their own</b> length.</li>
+</ol>
+
+<div class="note"><b>If the page freezes right after Save &amp; apply</b> — that is normal
+and harmless. An ESP32 has one radio, so when the station link joins the router the
+access point moves to the router's channel and your phone gets bumped off. Re-join
+<code>EXCAV-BEAM</code> and reload. Nothing was lost; the save already happened.</div>
+
+<h2 id="page"><span class="num">5</span>The web page, field by field</h2>
+
+<h3>Live cards (read-only, refreshed every second)</h3>
+<div class="scroll">
+<table>
+  <thead><tr><th>Card / field</th><th>Where the number comes from</th></tr></thead>
+  <tbody>
+    <tr><td><b>Angle</b> → roll / arm tilt</td><td>MPU6050 DMP roll — the <i>exact</i> value POSTed to the Pi. On the stick that is the EMA-filtered value (<code>rollFilt</code>), on the beam the raw one.</td></tr>
+    <tr><td>pitch, yaw</td><td>Same DMP packet. Yaw is raw and wraps at ±180°; the depth model does not use it.</td></tr>
+    <tr><td>MPU6050 badge</td><td><code>dmpReady</code> — false means DMP init failed, and the unit is reporting <code>mpu_ok=false</code> to the Pi (which raises the sensor alarm).</td></tr>
+    <tr><td><b>Links</b> → field wi-fi / joined ssid / IP / signal</td><td>Live <code>WiFi.status()</code>, <code>localIP()</code>, <code>RSSI()</code>. Below about −80 dBm expect dropped posts.</td></tr>
+    <tr><td>raspberry pi</td><td>The address this unit is POSTing to — from NVS, not from the source code.</td></tr>
+    <tr><td>config AP</td><td>This AP's name and IP, plus how many clients are on it.</td></tr>
+    <tr><td>uptime / free heap</td><td><code>millis()</code> and <code>ESP.getFreeHeap()</code>. A heap that keeps falling over hours is worth reporting.</td></tr>
+    <tr><td><b>Location (GNSS)</b> <span class="small">— stick only</span></td><td>The last fix the SIM7000G produced, mirrored from <code>postLocation()</code>. Cold start needs 30–60 s with sky view. "fix age" tells you how old it is (the unit polls every 5 s until it locks, then every 5 min). There is a link that opens the fix on OpenStreetMap.</td></tr>
+    <tr><td><b>Arm length → Raspberry Pi</b></td><td>See <a href="#length">section 6</a>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="small">The beam unit has no GNSS hardware, so its page hides the location
+card entirely. Position for the machine comes from the stick's SIM7000G, and the Pi
+serves both in <code>GET /status</code> under <code>location</code>.</p>
+
+<h3>Buttons</h3>
+<div class="scroll">
+<table>
+  <thead><tr><th>Button</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><b>Scan for networks</b></td><td>Asynchronous Wi-Fi scan; results fill the SSID box's dropdown. Async on purpose — a blocking 3 s scan inside the angle loop would make the Pi flag the unit stale and beep the buzzer.</td></tr>
+    <tr><td><b>Save &amp; apply</b></td><td>Validates, writes NVS, and applies immediately: new credentials trigger a re-join, a new length starts the hand-off. No reboot needed.</td></tr>
+    <tr><td><b>Re-send length to the Pi</b></td><td>Clears the "confirmed" flag so the current length is pushed again. Use it after you rebuild the Pi or point the unit at a different Pi.</td></tr>
+    <tr><td><b>Reboot unit</b></td><td>Restarts the ESP32. Settings survive; the unit is back in ~10 s.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="length"><span class="num">6</span>The one-shot length hand-off</h2>
+
+<p>You asked for the length to be sent <b>once</b>, with a confirmed transmission.
+That is exactly the contract:</p>
+
+<div class="flow card">
+  <div class="step"><div class="who">you</div><div>Type <code>4200</code> in the length box on the beam's page and press <b>Save &amp; apply</b>.</div></div>
+  <div class="step"><div class="who">beam</div><div>Stores 4200 mm in NVS, bumps its <b>edit counter</b> (<code>len_seq</code>) to 1 and marks the length <i>unconfirmed</i>.</div></div>
+  <div class="step"><div class="who">beam</div><div><code>POST /length {"id":"beam","len_mm":4200,"seq":1,"ip":"192.168.0.61"}</code></div></div>
+  <div class="step"><div class="who pi">pi</div><div>Sets <code>L1 = 4.2 m</code>, writes it to <code>monitoring_state.json</code>, mirrors it into the value the DWIN settings page prefills from, and answers <code>{"ok":true,"applied_mm":4200,...}</code>.</div></div>
+  <div class="step"><div class="who">beam</div><div>Marks the length <b>confirmed</b> (also in NVS) and <b>never sends it again</b>. The page shows <span class="tag t-new">CONFIRMED BY PI</span>.</div></div>
+</div>
+
+<p>Only two things ever restart that sequence:</p>
+<ul>
+  <li><b>The Pi did not answer.</b> Then the unit retries every 5 s — and only
+      then. So a length typed while the Pi was powered off still lands the moment
+      the Pi comes up. The page shows <span class="tag t-mod">PENDING</span> with
+      the attempt count and the last HTTP code.</li>
+  <li><b>The Pi lost it.</b> Every <code>/ingest</code> carries the unit's edit counter. If
+      the Pi's stored counter does not match (state file deleted, Pi replaced, SD
+      card reimaged), the <code>/ingest</code> reply carries <code>need_length: true</code> and the unit
+      re-runs the hand-off by itself. This costs nothing in the normal case — the
+      counter is 4 bytes on a post that already happens once a second.</li>
+</ul>
+
+<h3>What it looks like in the logs</h3>
+<p>On the unit's serial monitor:</p>
+<pre><code>[web] config saved: ssid='A 3' pi=192.168.0.110:5000 len=4200 mm seq=1
+      -- length queued for the Pi (seq 1).
+[len] 4200 mm (seq 1) CONFIRMED by the Pi at 192.168.0.110:5000 -- will not be sent again</code></pre>
+<p>...and if the Pi is not there yet:</p>
+<pre><code>[len] push of 4200 mm (seq 1) to 192.168.0.110:5000 failed (HTTP -1) -- retry in 5 s</code></pre>
+<p>On the Pi:</p>
+<pre><code>[len] beam web page assigned 4200 mm (4.200 m) seq=1 -&gt; L1   geometry now
+      L1=4.200 m L2=2.500 m (persisted to /home/pi/.../monitoring_state.json)
+[hmi] adopted external geometry: L1=4.200 m L2=2.500 m (settings page will prefill with it)</code></pre>
+<p>And the self-healing case, after you wipe the Pi's state file:</p>
+<pre><code>[len] beam reports length edit seq=1 but we have seq=-1 -- asking it to re-send (need_length)
+[len] beam web page assigned 4200 mm (4.200 m) seq=1 -&gt; L1   geometry now ...</code></pre>
+
+<div class="note"><b>A never-provisioned unit sends nothing.</b> The edit counter starts
+at 0 and 0 means "no length was ever typed on this unit's page". The Pi ignores it
+and never asks. That is deliberate: otherwise a freshly flashed spare unit would
+push its compiled-in 1100 mm default and quietly overwrite a length you had set on
+the DWIN panel.</div>
+
+<h2 id="pi"><span class="num">7</span>Raspberry Pi side</h2>
+
+<p>Run it exactly as before — no new arguments are required:</p>
+<pre><code>cd raspberry_pi
+python3 monitoring_control.py --http-port 5000 --dwin-port /dev/serial0 \
+        --device-id excavator1 --driver-csv Driver_name_database.xlsx</code></pre>
+
+<p>At startup it now also prints where each unit's page lives:</p>
+<pre><code>[main] HTTP on 0.0.0.0:5000  depth=L1*sin(boom)+L2*sin(stick)  beam L1=4.200 m (4200 mm)
+       stick L2=2.500 m (2500 mm)  target=1.5m  (POST /ingest /location /length /rfid,
+       GET /status, POST /config)
+[main] ESP32 lengths: beam seq=1 stick seq=1  -- each unit's own web page is at
+       http://192.168.4.1/ (beam AP 'EXCAV-BEAM') and http://192.168.5.1/ (stick AP
+       'EXCAV-STICK'), or http://beam.local / http://stick.local once they are on
+       this network</code></pre>
+
+<h3>Who wins when two places set the length</h3>
+<p>There are now three ways a length can arrive: a unit's web page
+(<code>POST /length</code>), the DWIN settings page (<kbd>SAVE</kbd>), and
+<code>POST /config</code> / the CLI <code>--l1</code>/<code>--l2</code>. The rule is simply
+<b>last writer wins</b>, and every write is logged with the resulting
+<code>L1</code>/<code>L2</code> pair so the log always tells you what the depth model is using.</p>
+<p>One subtlety I had to handle: the DWIN <kbd>BACK</kbd> key reverts the geometry to
+whatever was live when the operator opened the settings page. Without a fix, a
+length pushed from a unit mid-session would be silently undone by the next
+<kbd>BACK</kbd>. So <code>/length</code> and <code>/config</code> now call
+<code>HmiController.note_external_length()</code>, which adopts the new value as the revert
+baseline — unless the settings page is open right then, in which case the
+operator's in-progress entry stays authoritative and a log line says so.</p>
+
+<div class="card"><b>Want the panel to be the only source of geometry?</b> Start with
+<code>--no-esp-length</code>. Then <code>POST /length</code> is refused with HTTP 409, the
+<code>/ingest</code> reply never asks for a length, and the units' web pages become
+angle/GNSS/Wi-Fi displays only. Their <b>Save &amp; apply</b> still works locally —
+the length just stays on the unit and shows as <span class="tag t-mod">PENDING</span>.</div>
+
+<h3>New in <code>GET /status</code></h3>
+<pre><code>{
+  "boom_deg": 34.56, "stick_deg": -12.30, "depth_m": 1.482,
+  "L1": 4.2, "L2": 2.5,                        &lt;-- geometry actually in use (m)
+  "esp_lengths": {                              &lt;-- what each unit reported
+    "beam":  {"mm": 4200.0, "seq": 1, "age_ms": 91234, "ip": "192.168.0.61"},
+    "stick": {"mm": 2500.0, "seq": 1, "age_ms": 88010, "ip": "192.168.0.62"}
+  },
+  "location": { "stick": {"gps_ok": true, "lat": ..., "lon": ...}, ... },
+  ... every field that was there before is unchanged ...
+}</code></pre>
+<p class="small">The <code>ip</code> values come from the <code>ip</code> field the units now include in
+every <code>/ingest</code>, which is the easy way to find a unit's web page once it is on the
+field Wi-Fi: <code>curl -s http://&lt;pi&gt;:5000/status | python3 -m json.tool</code>. Existing
+consumers (<code>excavation_monitor.py</code>, the DWIN driver, the GEOMind uploader) are
+unaffected — nothing was removed or renamed.</p>
+
+<h2 id="api"><span class="num">8</span>HTTP API reference</h2>
+
+<h3>On each ESP32 unit</h3>
+<div class="scroll">
+<table>
+  <thead><tr><th>Route</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /</code></td><td>The page. Any unknown URL redirects here.</td></tr>
+    <tr><td><code>GET /api/live</code></td><td>Everything the page shows: <code>imu</code>, <code>net</code>, <code>gps</code>, <code>cfg</code>, <code>sys</code>.</td></tr>
+    <tr><td><code>GET /api/config</code></td><td>Saved settings. Never returns the stored Wi-Fi password — only <code>pass_set: true|false</code>.</td></tr>
+    <tr><td><code>POST /api/config</code></td><td>Apply + persist. Accepts JSON or form fields. Absent keys (and empty <code>ssid</code>/<code>pass</code>/<code>host</code>) are left alone, so partial updates are fine.</td></tr>
+    <tr><td><code>GET /api/scan</code></td><td>Async scan: returns <code>{"scanning":true}</code> while it runs, then the SSID list. Poll it.</td></tr>
+    <tr><td><code>POST /api/resend</code></td><td>Clear the confirmation so the length is pushed to the Pi again.</td></tr>
+    <tr><td><code>POST /api/reboot</code></td><td>Restart the unit.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>So you can provision a unit from a script instead of a browser:</p>
+<pre><code># set just the length (the beam is on its own AP at 192.168.4.1)
+curl -X POST http://192.168.4.1/api/config \
+     -H 'Content-Type: application/json' -d '{"len_mm":4200}'
+
+# set everything at once
+curl -X POST http://192.168.4.1/api/config -H 'Content-Type: application/json' \
+     -d '{"ssid":"A 3","pass":"98832988","host":"192.168.0.110","port":5000,"len_mm":4200}'
+
+# form encoding works too
+curl -d 'len_mm=4200' http://192.168.4.1/api/config
+
+# an OPEN field network needs the explicit clear (an empty "pass" means "keep")
+curl -X POST http://192.168.4.1/api/config -H 'Content-Type: application/json' \
+     -d '{"ssid":"OpenSite","pass_clear":true}'
+
+# read the live state
+curl -s http://192.168.4.1/api/live</code></pre>
+
+<h3>On the Raspberry Pi</h3>
+<div class="scroll">
+<table>
+  <thead><tr><th>Route</th><th></th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST /length</code></td><td><span class="tag t-new">NEW</span></td>
+        <td><code>{"id":"beam"|"stick","len_mm":4200,"seq":1,"ip":".."}</code> → beam sets
+            <code>L1</code>, stick sets <code>L2</code>. Answers
+            <code>{"ok":true,"applied_mm":..,"seq":..,"L1":..,"L2":..,"repeat":..}</code>.
+            Outside 100–20000 mm, or a bad <code>id</code>, gives HTTP 400 and changes
+            nothing. A repeat of an already-applied <code>seq</code> is acked again with
+            <code>repeat:true</code> — a lost ACK must not leave the two sides disagreeing.</td></tr>
+    <tr><td><code>POST /ingest</code></td><td><span class="tag t-mod">EXTENDED</span></td>
+        <td>Also reads <code>ip</code> and <code>len_seq</code>. The reply gained
+            <code>need_length</code>. The angle handling is untouched.</td></tr>
+    <tr><td><code>GET /status</code></td><td><span class="tag t-mod">EXTENDED</span></td>
+        <td>Gained <code>esp_lengths</code>, <code>L1</code>, <code>L2</code>. Nothing removed.</td></tr>
+    <tr><td><code>POST /location</code>, <code>POST /config</code>, <code>POST /rfid</code>, <code>POST /hse</code></td>
+        <td><span class="tag t-none">SAME</span></td><td>Unchanged.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code># push a length by hand, exactly as a unit would
+curl -X POST http://192.168.0.110:5000/length -H 'Content-Type: application/json' \
+     -d '{"id":"beam","len_mm":4200,"seq":99}'
+
+# see the geometry in use and what each unit reported
+curl -s http://192.168.0.110:5000/status | python3 -m json.tool</code></pre>
+
+<h2 id="verify"><span class="num">9</span>Verification checklist</h2>
+
+<p>Six checks, in order. Each one has a specific thing to look for.</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>#</th><th>Do</th><th>Expect</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Power a unit, watch the serial log</td><td><code>[web] config portal up: SSID 'EXCAV-BEAM' ... http://192.168.4.1/</code></td></tr>
+    <tr><td>2</td><td>Join that AP, open the IP</td><td>The page loads and the angle numbers move when you tilt the sensor</td></tr>
+    <tr><td>3</td><td>Enter the site SSID / password / Pi IP, press Save &amp; apply</td><td><b>field wi-fi</b> → <span class="tag t-new">JOINED</span> with an IP; on the Pi, <code>[ beam] angle=…</code> lines start</td></tr>
+    <tr><td>4</td><td>Enter the arm length, press Save &amp; apply</td><td>Unit: <code>[len] … CONFIRMED by the Pi</code>. Pi: <code>[len] beam web page assigned 4200 mm … -&gt; L1</code>. Page: <span class="tag t-new">CONFIRMED BY PI</span></td></tr>
+    <tr><td>5</td><td><code>curl -s http://&lt;pi&gt;:5000/status</code></td><td><code>L1</code> is your beam length in metres, <code>esp_lengths.beam.mm</code> matches what you typed, and <code>depth_m</code> changes as the arm moves</td></tr>
+    <tr><td>6</td><td>Stop the Pi, delete <code>monitoring_state.json</code>, start it again</td><td>Within a second or two: <code>[len] beam reports length edit seq=1 but we have seq=-1 -- asking it to re-send</code>, immediately followed by the length being re-applied. Nobody had to touch the machine.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="ok"><b>Already verified here:</b> both firmwares compile clean with zero
+warnings; the embedded page's markup, ids and JavaScript were parsed and the page
+render was exercised against the exact JSON the firmware produces; and the
+<code>/length</code> + <code>need_length</code> handshake was run end-to-end against <i>both</i> Pi
+receivers — first push, duplicate push, out-of-range and junk values, unknown ids,
+stick→<code>L2</code>, state-file persistence and <code>--no-esp-length</code> all behave as described.
+What could not be tested without hardware is the radio itself: the AP coming up,
+the DMP, and the SIM7000G.</div>
+
+<h2 id="trouble"><span class="num">10</span>Troubleshooting</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Symptom</th><th>Cause / fix</th></tr></thead>
+  <tbody>
+    <tr><td>The AP does not appear</td><td>Give it ~10 s: the MPU calibration runs first. If it still does not, check the serial log for the <code>[web] config portal up</code> line — without it, <code>fieldcfg_begin()</code> never ran.</td></tr>
+    <tr><td>The page loads but never updates</td><td><code>fieldcfg_handle()</code> is not being called. On the beam it lives in <code>loop()</code>, on the stick in <code>angleTask</code>. A blocking call added elsewhere in that task will starve it.</td></tr>
+    <tr><td>The page dies the moment I press Save</td><td>Expected — the AP followed the router to a new channel. Re-join <code>EXCAV-BEAM</code> and reload; the save already happened.</td></tr>
+    <tr><td>Wi-Fi never joins</td><td>Check the SSID for a hidden space (the site SSID is literally <code>A 3</code>) and use <b>Scan for networks</b>. 2.4 GHz only — an ESP32 cannot see a 5 GHz SSID.</td></tr>
+    <tr><td>Length stays <span class="tag t-mod">PENDING</span></td><td>Read <b>last attempt</b> on the page. <code>HTTP -1</code> = the Pi is not answering on that IP:port (wrong address, Pi down, different subnet). <code>HTTP 409</code> = the Pi was started with <code>--no-esp-length</code>. <code>HTTP 400</code> = the length is outside 100–20000 mm.</td></tr>
+    <tr><td>The Pi keeps asking for the length</td><td>It is failing to persist. Check that <code>monitoring_state.json</code> is writable — <code>save_state()</code> prints <code>[state] write failed:</code> when it is not.</td></tr>
+    <tr><td>Depth looks frozen or absurd</td><td>Check <code>L1</code>/<code>L2</code> in <code>GET /status</code>. The classic cause is a length entered in metres where millimetres were expected; <code>/length</code> refuses anything under 100 mm precisely to stop that.</td></tr>
+    <tr><td>Wrong unit's page</td><td>The beam is <code>192.168.4.1</code> on <code>EXCAV-BEAM</code>, the stick is <code>192.168.5.1</code> on <code>EXCAV-STICK</code>. The page title and the <code>device id</code> line under it also say which one you have.</td></tr>
+    <tr><td><code>beam.local</code> does not resolve</td><td>mDNS only works once the unit has joined the field Wi-Fi and your device is on the same network. Over the config AP always use the numeric IP.</td></tr>
+    <tr><td>Settings vanished after a flash</td><td>You ran <code>-t erase</code> (or <code>erase_flash</code>), which wipes NVS. Re-enter them; plain <code>-t upload</code> keeps them.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="limits"><span class="num">11</span>Limits &amp; things to know</h2>
+<ul>
+  <li><b>Security is deliberately minimal.</b> WPA2 on the AP with a shared password
+      and no login on the page. Anyone within Wi-Fi range who knows
+      <code>excav1234</code> can change the arm length and the Pi address. Change the AP
+      password in the <code>FIELD_ID</code> block of each <code>main.cpp</code> before this goes
+      anywhere public, and note that the field Wi-Fi password is <i>write-only</i>
+      through the API — the page can set it but never reads it back.</li>
+  <li><b>The two <code>web_config</code> files must stay byte-identical.</b> Nothing enforces
+      it. After editing one, copy both files to the other project:
+      <code>cp ESP32_Stick/src/web_config.* ESP32_Beam/src/</code>.</li>
+  <li><b>One radio, one channel.</b> AP+STA share it, so the AP hops when the station
+      joins, and heavy AP traffic and the 1 Hz telemetry compete. Fine at this data
+      rate; do not stream video through it.</li>
+  <li><b>The beam has no GNSS.</b> Its page hides the location card. If you want the
+      beam to show a position too, the honest options are to fit it a GNSS module
+      or to have its page read the Pi's <code>/status</code> — the latter needs the Pi
+      reachable from whatever is viewing the page.</li>
+  <li><b>The length is one-shot by design.</b> It is not re-sent on every post, so if
+      you change <code>L1</code>/<code>L2</code> on the Pi (panel, <code>/config</code>, CLI) the unit will not
+      argue — the Pi's value simply stands. Press <b>Re-send length to the Pi</b> on
+      the unit if you want the unit's number to win again.</li>
+  <li><b>The Pi's <code>/length</code> route has no authentication</b>, exactly like the
+      existing <code>/ingest</code>, <code>/config</code> and <code>/rfid</code> routes. It is bound to the field
+      network; keep that network closed.</li>
+</ul>
+
+<hr>
+<p class="small">Generated alongside the code changes for the excavation
+depth-monitoring project. Firmware: <code>documents for learning/ESP32_Beam</code> and
+<code>documents for learning/ESP32_Stick</code> (PlatformIO, Arduino-ESP32 2.0.17).
+Receiver: <code>raspberry_pi/monitoring_control.py</code>, with
+<code>raspberry_pi/sensor_receiver.py</code> kept in step as the standalone reference.</p>
+
+</div>
+</body>
+</html>

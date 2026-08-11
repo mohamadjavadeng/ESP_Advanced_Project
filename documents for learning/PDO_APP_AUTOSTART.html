@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDO App Autostart — wiring the discovered camera IP into the monitoring stack</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#1c1a17; --muted:#6b645c; --rule:#e2ddd6;
+    --card:#ffffff; --code-bg:#f4f1ec; --accent:#9a5b2c; --accent-soft:#f0e4d8;
+    --ok:#2f6b3f; --ok-bg:#e6f0e6; --warn:#8a6100; --warn-bg:#fbf0d8;
+    --bad:#94322b; --bad-bg:#f8e3e0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#17161a; --fg:#e9e5df; --muted:#9d968d; --rule:#33302f;
+      --card:#1f1e22; --code-bg:#222024; --accent:#d99a63; --accent-soft:#33261c;
+      --ok:#8ec89a; --ok-bg:#1e2a20; --warn:#e0b45f; --warn-bg:#2c2416;
+      --bad:#e8938a; --bad-bg:#2e1d1b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px; margin:0 auto; padding:48px 24px 96px}
+  header{border-bottom:2px solid var(--fg); padding-bottom:22px; margin-bottom:36px}
+  .kicker{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:700}
+  h1{font-size:34px; line-height:1.2; margin:10px 0 8px; letter-spacing:-.02em}
+  .sub{color:var(--muted); font-size:16px; margin:0}
+  .meta{margin-top:16px; font-size:13px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  h2{font-size:23px; margin:52px 0 14px; letter-spacing:-.01em; padding-top:14px; border-top:1px solid var(--rule)}
+  h3{font-size:17px; margin:30px 0 8px}
+  h4{margin:22px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:12px}
+  p{margin:12px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
+       background:var(--code-bg); padding:.12em .38em; border-radius:4px}
+  pre{background:var(--code-bg); border:1px solid var(--rule); border-radius:8px;
+      padding:14px 16px; overflow-x:auto; font-size:13.5px; line-height:1.55; margin:14px 0}
+  pre code{background:none; padding:0; font-size:inherit}
+  .c{color:var(--muted)} .out{color:var(--accent)}
+  .g{color:var(--ok)} .r{color:var(--bad)}
+  table{border-collapse:collapse; width:100%; margin:16px 0; font-size:14.5px; display:block; overflow-x:auto}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--rule); vertical-align:top}
+  th{font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); white-space:nowrap}
+  .box{border-radius:8px; padding:14px 18px; margin:20px 0; border:1px solid var(--rule); background:var(--card)}
+  .box p:first-child{margin-top:0} .box p:last-child{margin-bottom:0}
+  .box.key{border-left:4px solid var(--accent); background:var(--accent-soft)}
+  .box.ok{border-left:4px solid var(--ok); background:var(--ok-bg)}
+  .box.warn{border-left:4px solid var(--warn); background:var(--warn-bg)}
+  .box.bad{border-left:4px solid var(--bad); background:var(--bad-bg)}
+  .box .lbl{font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; display:block; margin-bottom:6px}
+  .key .lbl{color:var(--accent)} .ok .lbl{color:var(--ok)} .warn .lbl{color:var(--warn)} .bad .lbl{color:var(--bad)}
+  ol,ul{padding-left:22px} li{margin:7px 0}
+  figure{margin:26px 0} figcaption{font-size:13px; color:var(--muted); margin-top:8px; text-align:center}
+  svg{max-width:100%; height:auto; display:block; margin:0 auto}
+  .toc{background:var(--card); border:1px solid var(--rule); border-radius:8px; padding:18px 22px; margin:28px 0}
+  .toc ol{margin:6px 0 0; padding-left:20px} .toc li{margin:4px 0}
+  .toc a{color:var(--fg); text-decoration:none; border-bottom:1px solid var(--rule)}
+  .toc a:hover{border-color:var(--accent); color:var(--accent)}
+  .verdict{font-weight:700; font-size:12px; letter-spacing:.08em; padding:2px 8px; border-radius:4px; white-space:nowrap}
+  .vp{background:var(--ok-bg); color:var(--ok)} .vf{background:var(--bad-bg); color:var(--bad)}
+  footer{margin-top:64px; padding-top:20px; border-top:1px solid var(--rule); font-size:13px; color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Raspberry Pi 4 · PDO Excavator · Field Notes</div>
+  <h1>PDO App Autostart</h1>
+  <p class="sub">Turning two hand-typed commands into a boot-persistent pair of services, where the camera's address is discovered rather than typed — and the testing that shows it holds up.</p>
+  <div class="meta">Raspberrypi · Debian 13 (trixie) · 2026-08-08 · companion to AP_automation.html</div>
+</header>
+
+<div class="box warn">
+  <span class="lbl">Contains credentials</span>
+  <p>Records the Pi login so the commands run as written. Strip it before this file goes anywhere public.</p>
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#premise">The premise, corrected</a></li>
+    <li><a href="#shape">The shape of the problem</a></li>
+    <li><a href="#existing">What was already on the Pi</a></li>
+    <li><a href="#arch">How it works now</a></li>
+    <li><a href="#decisions">Seven design decisions, and why</a></li>
+    <li><a href="#files">What was installed</a></li>
+    <li><a href="#tests">The tests, including the two that were wrong</a></li>
+    <li><a href="#boot">Cold-boot evidence</a></li>
+    <li><a href="#usage">Daily use</a></li>
+    <li><a href="#gotchas">Gotchas worth keeping</a></li>
+    <li><a href="#loose">Loose ends</a></li>
+  </ol>
+</nav>
+
+<h2 id="premise">1. The premise, corrected</h2>
+
+<p>The request opened with "it doesn't save the camera IP". It was saving it, every 60 seconds without a miss. Checked before changing anything:</p>
+
+<pre><code>journalctl -u rpi-cam-find.service -n 12
+<span class="out">15:53:24  camera 0c:a6:4c:b7:64:ea at 192.168.50.25 (matched dhcp_name='H8c_BF9010198_EZVIZ', live now)
+15:54:24  camera ... live now
+15:55:24  camera ... live now</span>
+
+cat /var/lib/rpi-ap-sta/camera.env
+<span class="out">CAMERA_IP=192.168.50.25
+CAMERA_LIVE=1</span></code></pre>
+
+<p>The real gap was that <em>nothing read that file</em>. The address was sitting on disk, correct and current, while the launch command still carried <code>--ip 192.168.50.25</code> typed by hand. So the work was not discovery — it was <strong>wiring</strong>.</p>
+
+<div class="box key">
+  <span class="lbl">Worth separating</span>
+  <p>"The data is missing" and "nothing consumes the data" feel identical from the outside — in both cases the app has no IP. Checking which one it is takes one <code>cat</code> and decides whether you build a producer or a consumer. Building the wrong one is a day lost.</p>
+</div>
+
+<h2 id="shape">2. The shape of the problem</h2>
+
+<p>The manual routine was:</p>
+
+<pre><code>cd ~/Project/PDO/finalCode &amp;&amp; source ~/venv/bin/activate
+python control_monitoring2.py --device-id excavator1 --http-host 192.168.50.1 \
+       --hse-host 127.0.0.1 --alarm-buzzer off --push-interval 0.5 &amp;
+python rpi_person_zone_alarm.py --ip 192.168.50.25</code></pre>
+
+<p>Three constraints are hiding in there, and each one becomes a rule in the automation.</p>
+
+<h3>a. There is a real ordering dependency</h3>
+<p>Not a preference. Reading the sources settles who waits for whom:</p>
+<pre><code><span class="c"># control_monitoring2.py -- it BINDS and listens</span>
+srv.bind((self.args.hse_host, self.args.hse_port))
+srv.listen(1)
+<span class="c"># on failure: _set_camera_status("DISABLED: cannot bind ...")  &lt;- no retry</span>
+
+<span class="c"># rpi_person_zone_alarm.py -- it CONNECTS out</span>
+self.sock = socket.create_connection((host, port), ...)
+<span class="c"># "best-effort with ONE silent reconnect per send: a down link must never..."</span></code></pre>
+<p>Monitoring owns the socket, the detector dials in. So monitoring goes first. But note the second half: the detector <em>reconnects on its own</em>. That single fact later decides a dependency direction (§5c).</p>
+
+<h3>b. The bind address must exist before the bind</h3>
+<p><code>--http-host 192.168.50.1</code> is the AP's own address, which NetworkManager puts on <code>uap0</code> during boot. Bind to an address the kernel does not own yet and it fails — and this app does not retry, it just records <code>DISABLED</code> and runs on without an HSE server. A race that costs a few seconds to avoid, or the whole feature to ignore.</p>
+
+<h3>c. The camera's address is unknown at launch time</h3>
+<p>Which is the interesting one. It is not merely unknown at boot — it may be unknown for <em>hours</em>, because the camera can be switched off. Anything that treats "no camera yet" as an error will crash-loop for as long as the site is quiet.</p>
+
+<h2 id="existing">3. What was already on the Pi</h2>
+
+<p>Two disabled units turned up, which is why nothing was created until they had been read:</p>
+
+<pre><code>systemctl list-unit-files | grep -iE 'pdo|monitor|excav|alarm'
+<span class="out">excavator-controller.service    disabled
+excavator-detector.service      disabled</span></code></pre>
+
+<p>They were an earlier attempt at exactly this job. Four things made them unusable rather than a starting point:</p>
+
+<table>
+<tr><th>In the old unit</th><th>Problem</th></tr>
+<tr><td><code>ExecStart=/usr/bin/python3 ...</code></td><td>System interpreter, not <code>~/venv/bin/python</code>. The venv is where <code>cv2</code>, <code>flask</code>, <code>serial</code> and <code>RPi.GPIO</code> actually live.</td></tr>
+<tr><td><code>control_monitoring.py --no-camera</code></td><td>The <em>original</em> script, two versions behind <code>control_monitoring2.py</code>.</td></tr>
+<tr><td>No <code>--ip</code> at all</td><td>Falls back to the script default <code>192.168.100.67</code> — an address from a different network entirely.</td></tr>
+<tr><td><code>ExecStartPre=/bin/sleep 8</code></td><td>A guess standing in for a readiness check. Fine on a good day; wrong whenever the camera takes nine seconds.</td></tr>
+</table>
+
+<p>They were left in place, still disabled, rather than deleted — see <a href="#loose">§11</a>.</p>
+
+<div class="box key">
+  <span class="lbl">The pattern to take from this</span>
+  <p><code>sleep 8</code> is the tell. Wherever a fixed sleep appears in a unit file, there is a real condition somebody chose not to express: an address appearing, a port answering, a file being written. Name the condition and wait for <em>it</em>, and the fragility goes away instead of moving.</p>
+</div>
+
+<h2 id="arch">4. How it works now</h2>
+
+<figure>
+<svg viewBox="0 0 760 400" role="img" aria-label="Boot flow: uap0 comes up with the AP address; monitoring waits for that address then binds its HTTP and HSE sockets; the camera finder writes the camera state file every 60 seconds; the detector wrapper blocks until the state file reports a live camera whose RTSP port answers, then execs the detector, which dials the monitoring HSE socket. A change of camera IP triggers a detector restart.">
+  <defs>
+    <style>
+      .t{font:600 12.5px system-ui,sans-serif; fill:currentColor}
+      .s{font:11px system-ui,sans-serif; fill:currentColor; opacity:.72}
+      .m{font:ui-monospace,monospace; font-size:10.5px; fill:currentColor; opacity:.85}
+      .b{fill:none; stroke:currentColor; stroke-width:1.5; opacity:.5}
+      .ar{stroke:currentColor; stroke-width:1.4; fill:none; opacity:.65}
+    </style>
+    <marker id="h" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="currentColor" opacity=".65"/></marker>
+  </defs>
+
+  <!-- row 1 -->
+  <rect class="b" x="8" y="14" width="164" height="56" rx="6"/>
+  <text class="t" x="20" y="34">uap0.service</text>
+  <text class="s" x="20" y="50">virtual AP netdev +</text>
+  <text class="s" x="20" y="63">192.168.50.1 on it</text>
+
+  <path class="ar" d="M172 42 L204 42" marker-end="url(#h)"/>
+
+  <rect class="b" x="206" y="14" width="186" height="56" rx="6" stroke="#9a5b2c"/>
+  <text class="t" x="218" y="34">pdo-wait-ap.sh</text>
+  <text class="s" x="218" y="50">blocks until 192.168.50.1</text>
+  <text class="s" x="218" y="63">is really on an interface</text>
+
+  <path class="ar" d="M392 42 L424 42" marker-end="url(#h)"/>
+
+  <rect class="b" x="426" y="14" width="326" height="56" rx="6" stroke="#2f6b3f"/>
+  <text class="t" x="438" y="34">pdo-monitoring.service</text>
+  <text class="m" x="438" y="50">control_monitoring2.py --http-host 192.168.50.1</text>
+  <text class="m" x="438" y="63">binds :5000 (HTTP) and 127.0.0.1:5050 (HSE, listen)</text>
+
+  <!-- row 2: finder -->
+  <rect class="b" x="8" y="112" width="240" height="70" rx="6"/>
+  <text class="t" x="20" y="132">rpi-cam-find.timer — every 60s</text>
+  <text class="s" x="20" y="148">station dump + DHCP leases + ARP</text>
+  <text class="s" x="20" y="161">+ ONVIF, matched against CAM_PATTERN</text>
+  <text class="s" x="20" y="174">exit 3 = &quot;no camera yet&quot;, not a failure</text>
+
+  <path class="ar" d="M248 147 L286 147" marker-end="url(#h)"/>
+
+  <rect class="b" x="288" y="112" width="200" height="70" rx="6" stroke="#9a5b2c"/>
+  <text class="t" x="300" y="132">camera.env</text>
+  <text class="m" x="300" y="149">CAMERA_IP=192.168.50.25</text>
+  <text class="m" x="300" y="163">CAMERA_LIVE=1</text>
+  <text class="s" x="300" y="176">the single point of truth</text>
+
+  <!-- row 3: wrapper gate -->
+  <path class="ar" d="M388 182 L388 214" marker-end="url(#h)"/>
+  <rect class="b" x="206" y="216" width="364" height="74" rx="6" stroke="#9a5b2c"/>
+  <text class="t" x="218" y="236">pdo-person-alarm-run.sh — the gate</text>
+  <text class="s" x="218" y="253">poll every 5s, forever, until ALL of:</text>
+  <text class="s" x="218" y="267">CAMERA_IP set · CAMERA_LIVE=1 · TCP 554 answers</text>
+  <text class="s" x="218" y="281">then exec()s in place — same PID, no restart counted</text>
+
+  <path class="ar" d="M570 253 L604 253" marker-end="url(#h)"/>
+  <rect class="b" x="606" y="216" width="146" height="74" rx="6" stroke="#2f6b3f"/>
+  <text class="t" x="618" y="236">detector</text>
+  <text class="m" x="618" y="253">--ip 192.168.50.25</text>
+  <text class="s" x="618" y="269">injected, never</text>
+  <text class="s" x="618" y="282">typed</text>
+
+  <!-- alarm link back up -->
+  <path class="ar" d="M679 216 L679 76" marker-end="url(#h)" stroke-dasharray="4 3"/>
+  <text class="s" x="686" y="150">dials the HSE</text>
+  <text class="s" x="686" y="164">socket; reconnects</text>
+  <text class="s" x="686" y="178">by itself</text>
+
+  <!-- ip change hook -->
+  <path class="ar" d="M300 182 C240 200 214 220 210 244" marker-end="url(#h)" stroke-dasharray="4 3"/>
+  <text class="s" x="14" y="243">if the IP changed:</text>
+  <text class="m" x="14" y="258">systemctl try-restart</text>
+  <text class="s" x="14" y="273">(argv is fixed once</text>
+  <text class="s" x="14" y="286">started, so it must)</text>
+
+  <text class="s" x="8" y="330">Nothing in this chain guesses a duration. Each arrow waits for a named condition: an address exists, a</text>
+  <text class="s" x="8" y="346">file says live, a port answers. That is the whole difference from the old ExecStartPre=/bin/sleep 8.</text>
+  <text class="s" x="8" y="372">Solid arrow = starts / feeds.   Dashed = runtime connection or corrective action.</text>
+</svg>
+<figcaption>Two services, one state file between them, and no fixed sleeps anywhere.</figcaption>
+</figure>
+
+<h2 id="decisions">5. Seven design decisions, and why</h2>
+
+<h3>a. A wrapper script, not <code>ExecStart</code> with a variable</h3>
+<p>The obvious approach is <code>EnvironmentFile=/var/lib/rpi-ap-sta/camera.env</code> and <code>ExecStart=... --ip ${CAMERA_IP}</code>. It does not work, for a reason worth internalising: systemd expands an <code>EnvironmentFile</code> <strong>once, at unit start</strong>. At that moment the camera may be minutes away, or off for the weekend. The value we need does not exist yet, and the wait must be unbounded — so it has to happen inside a process, which means inside a wrapper.</p>
+
+<h3>b. Absolute interpreter path, no <code>source activate</code></h3>
+<pre><code>PDO_PY=/home/rpi4/venv/bin/python
+exec "$PDO_PY" "$MONITOR_SCRIPT" ...</code></pre>
+<p>Activating a venv only prepends its <code>bin</code> to <code>PATH</code>. Calling that interpreter directly achieves the same thing and cannot be undone by whatever <code>PATH</code> systemd hands the unit. Verified which venv first — <code>/home/rpi4/venv</code> has <code>cv2, numpy, flask, serial, PIL, RPi.GPIO, openpyxl</code>; <code>/home/rpi4/myenv</code> is empty and would have failed on the first import.</p>
+
+<h3>c. <code>Wants=</code>, deliberately not <code>Requires=</code></h3>
+<p>The old unit used <code>Requires=excavator-controller.service</code>. That reads as correct — no detector without a controller — but it means every monitoring restart tears the detector down too, throwing away a loaded YOLOv4-tiny model and ~30 s of startup. And it is unnecessary, because <code>AlarmLink</code> reconnects on its own (§2a). So:</p>
+<pre><code>After=pdo-monitoring.service rpi-cam-find.service uap0.service
+Wants=pdo-monitoring.service rpi-cam-find.timer</code></pre>
+<p>Starting the detector still pulls monitoring up with it; a monitoring bounce no longer touches the detector. Test 1 below measures exactly this.</p>
+
+<h3>d. <code>SuccessExitStatus=3</code></h3>
+<p>The finder exits <code>3</code> for "AP healthy, camera simply not here". Without declaring that a success, systemd marks the unit <code>failed</code> every 60 s while the camera is off — a journal full of red that trains you to ignore the journal.</p>
+
+<h3>e. Gate on the RTSP port, not just on presence</h3>
+<p>A camera can hold a DHCP lease and answer ARP while its RTSP server is still starting. The detector would then spend its <code>--attempts 5 --wait 4</code> budget on a device that was 10 s from ready. One extra condition removes that:</p>
+<pre><code>timeout 2 bash -c "exec 3&lt;&gt;/dev/tcp/$CAMERA_IP/554"</code></pre>
+<p>This is not hypothetical — it fired on the very first cold boot (<a href="#boot">§8</a>).</p>
+
+<h3>f. Distinguish "known" from "present"</h3>
+<p>A DHCP lease outlives the device that held it, so the state file can name a camera that is switched off. <code>CAMERA_LIVE</code> carries that distinction and the gate honours it:</p>
+<pre><code>camera 192.168.50.25 is known but not currently on the AP (CAMERA_LIVE=0)</code></pre>
+
+<h3>g. Restart the detector when the IP moves</h3>
+<p>The detector receives <code>--ip</code> in its argv, fixed for the life of the process. If DHCP hands the camera a different address, the detector cannot notice — it just talks to nobody. The finder can notice, so it acts:</p>
+<pre><code>if [ -n "$prev_ip" ] &amp;&amp; [ -n "$ip" ] &amp;&amp; [ "$prev_ip" != "$ip" ]; then
+    log "camera moved $prev_ip -> $ip; restarting the detector"
+    systemctl try-restart pdo-person-alarm.service || true
+fi</code></pre>
+<p><code>try-restart</code> rather than <code>restart</code>: it acts only if the unit is already running, so it is a no-op when the detector is deliberately stopped.</p>
+
+<h2 id="files">6. What was installed</h2>
+
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>/etc/default/pdo-apps</code></td><td>Every tunable in one file: paths, venv, all app arguments, gate settings.</td></tr>
+<tr><td><code>/usr/local/sbin/pdo-monitoring-run.sh</code></td><td>cd + venv python + args. Calls the AP-address wait first.</td></tr>
+<tr><td><code>/usr/local/sbin/pdo-person-alarm-run.sh</code></td><td>The gate. Waits for a live camera, then <code>exec</code>s the detector with <code>--ip</code>.</td></tr>
+<tr><td><code>/usr/local/sbin/pdo-wait-ap.sh</code></td><td>Blocks until <code>HTTP_HOST</code> exists on an interface.</td></tr>
+<tr><td><code>/etc/systemd/system/pdo-monitoring.service</code></td><td>Enabled at boot. <code>Restart=always</code>, groups for serial/GPIO.</td></tr>
+<tr><td><code>/etc/systemd/system/pdo-person-alarm.service</code></td><td>Enabled at boot. <code>Restart=always</code>, <code>Wants=</code> monitoring.</td></tr>
+<tr><td><code>/usr/local/bin/pdo</code></td><td>One command for the stack: <code>start stop restart status logs ip</code>.</td></tr>
+<tr><td><code>/usr/local/sbin/rpi-cam-find.sh</code></td><td>Amended: reads the previous IP from <code>camera.env</code>, and restarts the detector on a change.</td></tr>
+</table>
+
+<p>Groups matter on the monitoring unit — running as <code>rpi4</code> without them leaves the app up but unable to reach the panel or the buzzer:</p>
+<pre><code>SupplementaryGroups=dialout gpio i2c spi video input</code></pre>
+
+<h2 id="tests">7. The tests, including the two that were wrong</h2>
+
+<p>Five tests. Two of them initially proved nothing, and both failures were in the test rather than the system — recorded here because the mistakes are more instructive than the passes.</p>
+
+<h3>Test 1 — a monitoring restart must not disturb the detector <span class="verdict vp">PASS</span></h3>
+<pre><code>detector PID before: 9974
+sudo systemctl restart pdo-monitoring.service
+detector PID after : 9974        <span class="g">&lt;- same process, model not reloaded</span>
+detector NRestarts : 0
+<span class="out">16:03:05  [hse-link] armed (camera client 127.0.0.1:45224 connected)
+16:03:05  [INFO] alarm link connected to 127.0.0.1:5050</span></code></pre>
+<p>The link re-established itself two seconds after monitoring returned. Confirms the <code>Wants=</code> choice in §5c.</p>
+
+<h3>Test 2 — hard kill must recover and re-resolve the address <span class="verdict vp">PASS</span></h3>
+<pre><code>sudo kill -9 9974
+<span class="out">NRestarts=1
+10155 /home/rpi4/venv/bin/python rpi_person_zone_alarm.py --ip 192.168.50.25
+16:03:52 armed — watching for a person in the zone
+16:04:00 alarm link connected to 127.0.0.1:5050</span></code></pre>
+
+<h3>Test 3 — camera absent: must wait, not crash-loop <span class="verdict vf">two false passes first</span></h3>
+
+<p><strong>Attempt 1.</strong> Pointed <code>CAM_PATTERN</code> at a name that matches nothing, marked <code>CAMERA_LIVE=0</code>, restarted the detector. It logged the correct wait message and then started 25 s later — apparently a pass. It was not: the restore had not happened yet. What ended the wait was the finder's own <strong>carry-forward</strong> logic, which recognises the camera by MAC and re-marked it live, correctly, because the camera was still physically on the AP. The test had not simulated an absent camera at all.</p>
+
+<p><strong>Attempt 2.</strong> Tried to block the finder with <code>systemctl mask</code>:</p>
+<pre><code><span class="r">Failed to mask unit: File '/etc/systemd/system/rpi-cam-find.service' already exists</span></code></pre>
+<p>A unit whose file lives in <code>/etc/systemd/system</code> cannot be masked — masking wants to put a <code>/dev/null</code> symlink at that exact path. The finder ran, carry-forward revived the camera again.</p>
+
+<p><strong>Attempt 3.</strong> Removed the prior record as well, so carry-forward had nothing to carry — which is precisely the cold-boot-with-camera-off state. Also switched from <code>pgrep</code> to the unit's own <code>MainPID</code>, because <code>pgrep -cf 'rpi_person_zone_alarm'</code> was matching the SSH command line that contained the pattern and reporting phantom processes.</p>
+
+<pre><code>MainPID: 10920 -> <span class="g">bash /usr/local/sbin/pdo-person-alarm-run.sh</span>   <span class="c">&lt;- the gate, not python</span>
+NRestarts: 0
+<span class="out">16:08:35  waiting: no camera address in /var/lib/rpi-ap-sta/camera.env yet
+16:09:35  waiting: no camera address in /var/lib/rpi-ap-sta/camera.env yet</span>
+
+<span class="c">... camera restored ...</span>
+<span class="out">16:11:00  camera ready at 192.168.50.25 -- starting rpi_person_zone_alarm.py
+16:11:03  armed
+16:11:11  alarm link connected to 127.0.0.1:5050</span>
+MainPID: 10920 -> /home/rpi4/venv/bin/python rpi_person_zone_alarm.py --ip 192.168.50.25</code></pre>
+
+<p><span class="verdict vp">PASS</span> Waited 2 m 25 s. <code>NRestarts</code> stayed 0, the wait message appeared once a minute rather than every poll, the PID never changed (the wrapper <code>exec</code>ed in place), and the transition needed no intervention.</p>
+
+<div class="box bad">
+  <span class="lbl">Three ways a test lies, all seen here</span>
+  <ol>
+    <li><strong>The system self-heals faster than you can measure.</strong> Carry-forward is a feature; it also silently repaired the condition under test. To test a fallback you must disable every path that fixes it.</li>
+    <li><strong>Your own command matches your own probe.</strong> <code>pgrep -f X</code> run from a shell whose command line contains <code>X</code> counts itself. Ask systemd for <code>MainPID</code> instead.</li>
+    <li><strong>Timing races in the harness.</strong> A later <code>systemctl start</code> of an already-running oneshot collapses into the in-flight run — which still had the old config — so the "restore" never took effect inside the observation window. Verified by reading the timestamps, not by assuming.</li>
+  </ol>
+</div>
+
+<h3>Test 4 — the IP-change hook <span class="verdict vp">PASS</span></h3>
+<p>Faked a stale recorded address so the next scan sees a move:</p>
+<pre><code>sudo sed -i 's|^CAMERA_IP=.*|CAMERA_IP=192.168.50.99|' /var/lib/rpi-ap-sta/camera.env
+sudo /usr/local/sbin/rpi-cam-find.sh
+<span class="out">camera 0c:a6:4c:b7:64:ea at 192.168.50.25 (matched dhcp_name='H8c_BF9010198_EZVIZ', live now)
+camera moved 192.168.50.99 -> 192.168.50.25; restarting the detector to pick up the new address</span>
+detector PID: 10920 -> 11407     <span class="g">restarted with the correct address</span></code></pre>
+<p><code>NRestarts</code> stays 0 here, correctly — an explicit <code>try-restart</code> is not a failure-restart, and systemd counts only the latter.</p>
+
+<h3>Test 5 — cold reboot <span class="verdict vp">PASS</span></h3>
+<p>See <a href="#boot">§8</a>.</p>
+
+<h2 id="boot">8. Cold-boot evidence</h2>
+
+<p>Both units enabled, full reboot, nothing typed afterwards:</p>
+
+<pre><code>uptime: up 2 minutes
+
+uap0.service              active   restarts=0
+rpi-cam-find.timer        active
+pdo-monitoring.service    active   restarts=0
+pdo-person-alarm.service  active   restarts=0
+
+1435 python control_monitoring2.py --device-id excavator1 --http-host 192.168.50.1 \
+          --hse-host 127.0.0.1 --alarm-buzzer off --push-interval 0.5
+1436 python rpi_person_zone_alarm.py --ip 192.168.50.25
+
+LISTEN  192.168.50.1:5000   pid=1435
+LISTEN  127.0.0.1:5050      pid=1435
+ESTAB on 5050: 2</code></pre>
+
+<p>The argv is character-for-character the manual command, with <code>--ip</code> supplied by the machine. The timeline is the part worth reading:</p>
+
+<pre><code><span class="out">16:13:05  starting control_monitoring2.py (device=excavator1 http=192.168.50.1)
+16:13:08  [main] HTTP on 192.168.50.1:5000
+16:13:08  [hse-link] waiting for camera client on 127.0.0.1:5050
+16:13:07  waiting: camera 192.168.50.25 is on the AP but RTSP/554 is not answering yet
+16:13:19  camera ready at 192.168.50.25 -- starting rpi_person_zone_alarm.py
+16:13:37  armed — watching for a person in the zone
+16:13:44  alarm link connected to 127.0.0.1:5050
+16:13:44  [hse-link] armed (camera client 127.0.0.1:39652 connected)</span></code></pre>
+
+<div class="box ok">
+  <span class="lbl">The RTSP gate paid for itself immediately</span>
+  <p>At 16:13:07 the camera had already rejoined the AP and held its lease — every presence check would have said "ready" — but its RTSP server was not up for another twelve seconds. The old <code>sleep 8</code> would have handed the detector a camera that was not listening yet. Waiting for the port instead of a duration cost nothing and removed the failure entirely.</p>
+</div>
+
+<p><code>pdo-wait-ap</code> logged nothing, which is the correct outcome: it only reports when it actually had to wait, and <code>192.168.50.1</code> was already present on its first check.</p>
+
+<h2 id="usage">9. Daily use</h2>
+
+<p>The whole routine is now nothing, since both units are enabled at boot. When you do need to drive it:</p>
+
+<pre><code>pdo status          <span class="c"># what is up, where the camera is, which processes exist</span>
+pdo start | stop | restart
+pdo logs            <span class="c"># follow both apps and the finder together</span>
+pdo logs alarm      <span class="c"># or: monitoring | cam</span>
+pdo ip              <span class="c"># prints just the camera IP, for use in scripts</span></code></pre>
+
+<p>To change any argument, edit one file and restart — no unit files involved:</p>
+<pre><code>sudo nano /etc/default/pdo-apps
+sudo systemctl restart pdo-monitoring pdo-person-alarm</code></pre>
+
+<p>Reading the IP from your own code, in preference order:</p>
+<pre><code>. /var/lib/rpi-ap-sta/camera.env   <span class="c"># CAMERA_IP, CAMERA_MAC, CAMERA_RTSP, CAMERA_LIVE</span>
+cat /run/rpi-camera-ip             <span class="c"># the IP alone</span>
+ping ipcam                         <span class="c"># /etc/hosts alias, kept current</span></code></pre>
+
+<div class="box warn">
+  <span class="lbl">Before running either app by hand again</span>
+  <p><code>sudo pdo stop</code> first. Monitoring binds <code>:5000</code> and <code>:5050</code>, and the HSE socket is <code>listen(1)</code> — a single slot. A second copy will not politely queue; it will fail to bind, or take the slot the service wanted.</p>
+</div>
+
+<h2 id="gotchas">10. Gotchas worth keeping</h2>
+
+<table>
+<tr><th>Gotcha</th><th>What to do instead</th></tr>
+<tr><td><code>pgrep -f pattern</code> counts your own shell when the pattern is in your command line</td><td><code>systemctl show -p MainPID --value unit</code>, then <code>ps -p $PID -o args=</code></td></tr>
+<tr><td><code>systemctl mask</code> fails for units living in <code>/etc/systemd/system</code></td><td>Stop the timer and remove the state it depends on, or move the unit file aside</td></tr>
+<tr><td><code>systemctl start</code> on an in-flight oneshot joins that run instead of forcing a new one</td><td>Wait for it to finish, or run the script in the foreground when you need a fresh read of config</td></tr>
+<tr><td><code>EnvironmentFile</code> is read once at unit start</td><td>Any value that appears later must be read inside the process — a wrapper</td></tr>
+<tr><td><code>iw</code> station dumps silently return nothing without root, and <code>iw</code> is not on the user <code>PATH</code></td><td><code>sudo</code>, and set <code>PATH=/usr/sbin:...</code> at the top of scripts</td></tr>
+<tr><td>A fixed <code>sleep</code> in a unit file</td><td>Name the condition it stands for and poll that</td></tr>
+</table>
+
+<h2 id="loose">11. Loose ends</h2>
+
+<ul>
+  <li><strong><code>excavator-controller.service</code> and <code>excavator-detector.service</code> still exist, disabled.</strong> Harmless where they are, but they point at the old script with the wrong interpreter and a wrong camera IP, so anyone who enables them later will get a confusing failure. Say the word and they go.</li>
+  <li><strong><code>Driver_name_database.xlsx</code> is missing</strong> from <code>finalCode/</code>: <code>[rfid] local file read failed: [Errno 2] No such file or directory</code>. Pre-existing, and the app recovers by loading 2 tags from the cloud — but the local fallback is not there if the cloud is unreachable.</li>
+  <li><strong>Cloud auth uses password login.</strong> The app warns: <code>no --geomind-apikey set; falling back to PASSWORD login. This evicts the portal user and is revoked when anyone else logs in.</code> Worth setting an API key.</li>
+  <li><strong>The Pi and repo copies have diverged slightly.</strong> <code>control_monitoring2.py</code> on the Pi is 112076 bytes (Aug 2); <code>raspberry_pi/monitoring_control.py</code> in the repo is 112075 (Jul 29). Nothing was overwritten — the Pi's working copy was left alone deliberately. Reconcile them when convenient.</li>
+  <li><strong>Standing risk from the AP work:</strong> the station is pinned to 2.4 GHz and <code>eth0</code> is down, so a dead 2.4 GHz upstream means no way in. See <code>AP_automation.html</code> §10.</li>
+</ul>
+
+<footer>
+  Session of 2026-08-08. Companion: <code>rpi_wifi_control/AP_automation.html</code> (how the AP itself was repaired and the camera made discoverable).
+  Config: <code>/etc/default/pdo-apps</code> and <code>/etc/default/rpi-ap-camera</code>. Diagnostics: <code>pdo status</code>, <code>sudo bash /usr/local/sbin/apsta-doctor.sh</code>.
+</footer>
+
+</div>
+</body>
+</html>

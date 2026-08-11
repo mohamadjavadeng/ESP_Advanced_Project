@@ -7,9 +7,20 @@ ONE process ties together what used to be separate scripts:
 
   1. SENSOR INGEST (was sensor_receiver.py) -- a Flask server the two ESP32
      units POST to:
-        POST /ingest    {"id":"stick"|"beam","angle_deg":..,"mpu_ok":..,"seq":..}
+        POST /ingest    {"id":"stick"|"beam","angle_deg":..,"mpu_ok":..,"seq":..,
+                         "ip":"192.168.0.61","len_seq":3}
         POST /location  {"id":"stick","gps_ok":..,"lat":..,"lon":..,...}
+        POST /length    {"id":"beam","len_mm":4200,"seq":3,"ip":".."}
      It computes  depth = L1*sin(boom) + L2*sin(stick)  and serves GET /status.
+
+     ARM LENGTH FROM THE UNIT ITSELF: each ESP32 now runs its own Wi-Fi AP + web
+     page (ESP32_Beam/src/web_config.cpp) where the operator types the length of
+     the arm that unit is bolted to. The unit POSTs it to /length ONCE per edit
+     and keeps retrying only until this program answers ok=true, so a length typed
+     while the Pi was off still lands. The unit's edit counter rides along in
+     every /ingest; when it does not match what we have stored (state file wiped,
+     Pi replaced) the /ingest reply carries need_length=true and the unit re-sends.
+     Pass --no-esp-length to ignore unit-supplied lengths entirely.
 
   2. DWIN HMI (was dwin_hmi_app.py) -- the ONLY thread that owns the serial
      port. It WRITES current depth (0x0001), driver name (0x0200) and target
@@ -18,10 +29,18 @@ ONE process ties together what used to be separate scripts:
      the buzzer whenever EITHER is active (silent only when both clear). Over-dig
      auto-clears once the operator lifts the bucket (depth < target - hyst). A
      main-page TARE key (VP 0x1000 == 0x00FF) zeroes the depth at the current
-     position. On the SETTINGS page beam (0x0012) / stick (0x2000) / wifi (ssid
+     position. On the SETTINGS page beam (0x1200) / stick (0x2000) / wifi (ssid
      0x0330, pw 0x0350) auto-upload with a 1 s confirm beep; beam/stick apply
      LIVE but only persist on SAVE (0x0011), while BACK (0x0010) reverts every
      field to the last saved value.
+
+     BEAM/STICK LENGTH is the geometry behind depth, tare and initialisation, so
+     it does not rely on the panel pushing anything: on SAVE each length VP is
+     READ BACK off the panel when no auto-upload arrived, both the new and the old
+     legacy address are accepted (--beam-vp/--stick-vp), mm and metre entry are
+     both understood, out-of-range values are refused instead of silently wrecking
+     the geometry, and every press prints the resulting beam/stick pair. See the
+     VP address map below for why the old beam VP 0x0012 could never work.
 
   3. CLOUD SYNC (GEOMind / geobox SDK) -- a background thread that:
         * first run on a device: creates a VECTOR layer (+ one FEATURE) and a
@@ -88,6 +107,7 @@ import queue
 import socket
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
@@ -120,6 +140,25 @@ except Exception as _e:
     _MFRC522_OK, _MFRC522_ERR = False, _e
 
 # --------------------------------------------------------------- VP address map
+#
+# !! DGUS II reserves VP 0x0000-0x0FFF for the kernel ("System Variable
+# Interface", T5L_DGUSII Application Development Guide ch.5). User data belongs
+# at >= 0x1000. The live registers in that window that bit us:
+#
+#     0x0010-0x0013  RTC     R/W 4 words -- the kernel REWRITES this every second
+#     0x0014         PIC_Now R   1 word  -- current page, read-only
+#     0x0015         GUI_Status
+#     0x0016-0x0019  TP_Status   4 words -- rewritten on every screen touch
+#
+# The beam length used to sit at 0x0012, i.e. inside RTC (hour/minute), and its
+# 8-byte text field ran over RTC-second + PIC_Now. A typed value survived at most
+# one second there and read back as clock bytes -- which is exactly the "I set the
+# length and nothing changes" symptom. The legacy stick VP 0x0016 was inside
+# TP_Status, equally hopeless. Both now default to user space, and both the new
+# and the old address are ACCEPTED on receive (--beam-vp/--stick-vp take a
+# comma-separated list) so this file works before and after the DGUS project is
+# rebuilt. audit_vp_map() prints the collision for anything still too low.
+#
 # Page 1 (Pi -> panel)
 VP_DEPTH_TEXT    = 0x0001   # current depth, written as TEXT
 VP_DRIVER_NAME   = 0x0200   # driver name, TEXT, max 20 chars
@@ -132,17 +171,19 @@ VP_HSE_ALARM     = 0x0400   # HSE/person alarm flag: 1 = alarm, 0 = clear (--hse
 VP_DEPTH_OFFSET = 0x1000
 OFFSET_TRIGGER  = 0x00FF
 
-# Page 2 (panel -> Pi, auto-upload)
-VP_BEAM_LEN  = 0x0012      # beam length, TEXT (mm)
-VP_STICK_LEN = 0x2000      # stick length, TEXT (mm) -- 0x2000 in the CURRENT DGUS
-                           # project (operator-confirmed 2026-07-06; older compiled
-                           # bins used 0x0016). If stick edits are ignored, re-check
-                           # this VP + its data-auto-upload flag in the panel.
+# Page 2 (panel -> Pi, auto-upload). Lists: first entry is CANONICAL (the address
+# the Pi polls and writes back to), the rest are legacy addresses still accepted
+# on receive so an un-rebuilt panel keeps working.
+VP_BEAM_LEN  = 0x1200      # beam length, TEXT (mm) -- user space
+VP_STICK_LEN = 0x2000      # stick length, TEXT (mm) -- operator-confirmed
+BEAM_LEN_VPS  = (VP_BEAM_LEN, 0x0012)    # 0x0012 = legacy, inside the RTC block
+STICK_LEN_VPS = (VP_STICK_LEN, 0x0016)   # 0x0016 = legacy, inside TP_Status
 VP_SSID      = 0x0330      # Wi-Fi SSID, TEXT
 VP_PASSWORD  = 0x0350      # Wi-Fi password, TEXT
-SETTINGS_VPS = (VP_BEAM_LEN, VP_STICK_LEN, VP_SSID, VP_PASSWORD)
 
-# Control / status frames (panel -> Pi)
+# Control / status frames (panel -> Pi). These are Return-Key-Value touch
+# controls: the press is delivered by the pushed 0x83 frame, so they survive
+# living in the RTC window (we never read their VP back).
 VP_PAGE_FLAG  = 0x0030     # == TRIGGER -> panel is on the settings page
 VP_SAVE_BTN   = 0x0011     # == TRIGGER -> save settings
 VP_CANCEL_BTN = 0x0010     # == TRIGGER -> cancel, back to main
@@ -150,11 +191,106 @@ VP_CANCEL_BTN = 0x0010     # == TRIGGER -> cancel, back to main
 TRIGGER  = 0x0022          # value each control VP carries when active
 CMD_READ = 0x83            # auto-upload frames look like a 0x83 read response
 
+# Lowest VP the DGUS kernel does NOT own; anything below is a system register.
+USER_VP_BASE = 0x1000
+
 # TEXT field widths (bytes) the Pi writes; pad so old longer text is cleared.
 DEPTH_LEN, NAME_LEN, TARGET_LEN = 8, 20, 8
 # Settings-field widths for prefill / BACK write-back. MUST equal the text length
 # set for each VP in the DGUS project, or a write overruns into the next VP.
 LEN_TEXT_LEN, SSID_LEN, PASS_LEN = 8, 20, 20
+
+# Plausible boom/stick length. Outside this the value is junk (a half-typed
+# keypad entry, or RTC bytes read out of a system VP) and must NOT reach cfg --
+# silently setting L1=0.0011 m is what makes depth look frozen.
+LEN_MM_MIN, LEN_MM_MAX = 100.0, 20000.0
+
+# The DGUS II system registers, for audit_vp_map(): (base, words, name).
+DGUS_SYS_REGS = (
+    (0x0000, 4, "Reserved"),          (0x0004, 2, "System_Reset"),
+    (0x0006, 2, "OS_Update_CMD"),     (0x0008, 4, "NOR_FLASH_RW_CMD"),
+    (0x000C, 3, "Reserved"),          (0x000F, 1, "Ver"),
+    (0x0010, 4, "RTC (rewritten every second)"),
+    (0x0014, 1, "PIC_Now (current page, read-only)"),
+    (0x0015, 1, "GUI_Status"),
+    (0x0016, 4, "TP_Status (rewritten on every touch)"),
+    (0x0031, 1, "LED_Now"),           (0x0032, 8, "AD0-AD7"),
+    (0x007A, 2, "LCD_HOR/LCD_VER"),   (0x0080, 2, "System_Config"),
+    (0x0082, 2, "LED_Config"),        (0x0084, 2, "PIC_Set"),
+    (0x0086, 4, "PWM0/1_Set"),        (0x0092, 2, "PWM0/1_Out"),
+    (0x009C, 4, "RTC_Set"),           (0x00A0, 4, "WAE/Music_Play_Set"),
+    (0x00AA, 6, "External FLASH write"),
+    (0x00B0, 4, "Touch instruction access"),
+    (0x00D4, 8, "TP operation simulation"),
+    (0x00E0, 2, "Memory CRC check"),  (0x00F0, 4, "Music stream"),
+    (0x00F4, 8, "Painting interface"), (0x00FC, 2, "DGUS_STOP_EN"),
+    (0x00FE, 2, "UART1 high-speed download"),
+    (0x0100, 512, "FSK bus interface"),
+    (0x0380, 2, "curve ch1 auto-read config"),
+    (0x0382, 14, "curve ch2-8 config"),
+    (0x0F00, 1, "Variable change indication"),
+)
+
+
+# The subset above that the kernel writes BY ITSELF, so a value parked there is
+# destroyed with no warning: (base, words). The rest of 0x0000-0x0FFF is command /
+# config registers the kernel only touches when that feature is used -- squatting
+# there is still wrong, but it does work, and this project already ships VPs
+# (depth 0x0001, ssid 0x0330, ...) that rely on it. Only the live set is refused.
+DGUS_SYS_LIVE = (
+    (0x000F, 1), (0x0010, 4), (0x0014, 1), (0x0015, 1), (0x0016, 4),
+    (0x0031, 1), (0x0032, 8), (0x007A, 2), (0x0F00, 1),
+)
+
+
+def sys_reg_at(addr):
+    """Name of the DGUS kernel register `addr` collides with, or None."""
+    if addr >= USER_VP_BASE:
+        return None
+    for base, words, name in DGUS_SYS_REGS:
+        if base <= addr < base + words:
+            return name
+    return "reserved system-variable space"
+
+
+def sys_reg_live_at(addr):
+    """Name of the SELF-UPDATING kernel register at `addr`, or None.
+
+    A read or write here is refused outright: the RTC ticks every second and
+    TP_Status on every touch, so the bytes we put in are gone before the operator
+    presses SAVE and the bytes we read back are clock/touch data.
+    """
+    if addr >= USER_VP_BASE:
+        return None
+    for base, words in DGUS_SYS_LIVE:
+        if base <= addr < base + words:
+            return sys_reg_at(addr)
+    return None
+
+
+def audit_vp_map(pairs):
+    """Print every configured VP that lands on a DGUS kernel register.
+
+    `pairs` is (label, addr, n_bytes_written). A read/write VP inside 0x0000-
+    0x0FFF is a latent bug: dormant kernel features tolerate it, live ones (RTC,
+    TP_Status, PIC_Now) silently eat the value.
+    """
+    bad = []
+    for label, addr, nbytes in pairs:
+        span = max(1, (int(nbytes) + 1) // 2)      # bytes -> words
+        for word in range(span):
+            hit = sys_reg_at(addr + word)
+            if hit:
+                bad.append((label, addr, addr + word, hit))
+                break
+    if not bad:
+        print("[hmi] VP map audit: all VPs in user space (>= 0x1000)", flush=True)
+        return
+    print(f"[hmi] VP map audit: {len(bad)} VP(s) inside the DGUS system window "
+          f"(0x0000-0x0FFF) -- relocate these in the DGUS project:", flush=True)
+    for label, addr, word, hit in bad:
+        where = f"0x{addr:04X}" if word == addr else f"0x{addr:04X} (+0x{word:04X})"
+        print(f"[hmi]   {label:<14} {where} -> {hit}", flush=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -167,9 +303,26 @@ _stop = threading.Event()
 _rfid_refresh = threading.Event()
 
 state = {
-    "stick": {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
-    "beam":  {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
+    "stick": {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0, "ip": ""},
+    "beam":  {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0, "ip": ""},
 }
+# Arm length each ESP32 unit was given on ITS OWN web page (POST /length).
+#   mm    -- the length as the unit reported it
+#   seq   -- the unit's edit counter; it rides along in every /ingest so we can
+#            spot a disagreement and ask for a re-send (need_length)
+#   asked -- the last seq we asked to have re-sent (so the 1 Hz /ingest log does
+#            not repeat the request line forever)
+lengths = {
+    "stick": {"mm": 0.0, "seq": -1, "ts": 0.0, "asked": -1},
+    "beam":  {"mm": 0.0, "seq": -1, "ts": 0.0, "asked": -1},
+}
+# Set from --no-esp-length: when False a unit's /length post is refused and its
+# /ingest never asks for one, so ONLY the HMI / CLI / cloud set the geometry.
+ESP_LENGTH = True
+# The HmiController instance (set in main()). A length that arrives from an ESP32
+# has to refresh the panel's BACK-revert baseline, or the next BACK press would
+# silently restore the pre-push geometry.
+HMI = None
 # Latest GNSS fix per unit (only units with a SIM7000G populate this -- the
 # stick does by default; the beam stays all-zero unless it gets a modem too).
 location = {
@@ -234,6 +387,25 @@ def load_state(path):
                     cfg[ck] = float(_persist[key])
             except (TypeError, ValueError):
                 pass
+        # The settings page prefills from the mm text mirror; derive it from the
+        # geometry when it is missing (older state file, or lengths set via
+        # --l1/--l2) so the length boxes never open blank.
+        for key, ck in (("beam_len_mm", "L1"), ("stick_len_mm", "L2")):
+            if not str(_persist.get(key, "")).strip():
+                _persist[key] = f"{cfg[ck] * 1000.0:.0f}"
+        # Remember which length edit each ESP32 unit already handed over, so a
+        # restart does not make every unit re-send (see /ingest -> need_length).
+        # `mm` is only for display; the authoritative value is cfg L1/L2 above.
+        for uid in lengths:
+            try:
+                lengths[uid]["seq"] = int(_persist.get(f"{uid}_len_seq", -1))
+            except (TypeError, ValueError):
+                lengths[uid]["seq"] = -1
+            try:
+                key = "beam_len_mm" if uid == "beam" else "stick_len_mm"
+                lengths[uid]["mm"] = float(_persist.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                lengths[uid]["mm"] = 0.0
         # Restore the last driver so the HMI/cloud show it after a restart,
         # until the operator taps a card again.
         for rk in ("driver_name", "driver_tag", "rfid_uid"):
@@ -241,7 +413,10 @@ def load_state(path):
                 runtime[rk] = _persist[rk]
         if "driver_present" in _persist:
             runtime["driver_present"] = bool(_persist["driver_present"])
-    print(f"[state] loaded {path}", flush=True)
+        L1, L2, off = cfg["L1"], cfg["L2"], cfg["depth_offset"]
+    print(f"[state] loaded {path}: beam L1={L1:.3f} m ({L1 * 1000:.0f} mm)  "
+          f"stick L2={L2:.3f} m ({L2 * 1000:.0f} mm)  depth_offset={off:.3f} m",
+          flush=True)
     return _persist
 
 
@@ -254,6 +429,8 @@ def save_state():
         _persist["l2"] = cfg["L2"]
         _persist["target_depth"] = cfg["target_depth"]
         _persist["depth_offset"] = cfg["depth_offset"]
+        for uid in lengths:                    # ESP32 length hand-off bookkeeping
+            _persist[f"{uid}_len_seq"] = lengths[uid]["seq"]
         data = json.dumps(_persist, indent=2)
     try:
         tmp = _state_path + ".tmp"
@@ -305,6 +482,15 @@ def build_status():
                 "sats": L["sats"], "hacc_m": round(L["hacc_m"], 1),
                 "age_ms": age, "seq": L["seq"],
             }
+        # What each ESP32 unit says its arm measures, and where its web page is.
+        esp_len = {}
+        for uid, R in lengths.items():
+            esp_len[uid] = {
+                "mm": round(R["mm"], 1),
+                "seq": R["seq"],
+                "age_ms": int((now - R["ts"]) * 1000) if R["ts"] else -1,
+                "ip": state[uid].get("ip", ""),
+            }
         rt = dict(runtime)
         return {
             "boom_deg": round(boom["angle_deg"], 2),
@@ -324,6 +510,8 @@ def build_status():
             "cloud_ok": rt["cloud_ok"], "hmi_ok": rt["hmi_ok"],
             "boom_age_ms": boom_age, "stick_age_ms": stick_age,
             "location": loc,
+            "L1": cfg["L1"], "L2": cfg["L2"],   # geometry actually in use (m)
+            "esp_lengths": esp_len,             # length + web-page IP per unit
         }
 
 
@@ -356,25 +544,57 @@ app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
+def _as_int(value, default=-1):
+    """int() that never raises on junk from the wire."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @app.post("/ingest")
 def ingest():
-    """Receive one raw tilt sample from an ESP32 unit."""
+    """Receive one raw tilt sample from an ESP32 unit.
+
+    The reply carries need_length=true when the unit's length edit counter is not
+    the one we have stored -- that is the only way a Pi whose state file was wiped
+    (or a replacement Pi) can get the arm length back without anyone walking to
+    the machine. The unit then re-runs its one-shot POST /length.
+    """
     d = request.get_json(silent=True) or {}
     uid = d.get("id")
     if uid not in state:
         return jsonify(error="unknown id (use 'stick' or 'beam')"), 400
+    esp_len_seq = _as_int(d.get("len_seq", 0), 0)
     with _lock:
         u = state[uid]
         u["angle_deg"] = float(d.get("angle_deg", u["angle_deg"]))
         u["mpu_ok"] = bool(d.get("mpu_ok", False))
         u["seq"] = int(d.get("seq", -1))
         u["ts"] = time.monotonic()
+        if d.get("ip"):                 # so the log can point at the unit's web page
+            u["ip"] = str(d["ip"])[:40]
         angle, mpu_ok, seq = u["angle_deg"], u["mpu_ok"], u["seq"]
+        # seq 0 means "no length was ever assigned on that unit's web page" --
+        # nothing to ask for, and its compiled-in default must NOT overwrite a
+        # length the operator set on the HMI.
+        rec = lengths[uid]
+        our_seq = rec["seq"]
+        need_length = bool(ESP_LENGTH and esp_len_seq > 0
+                           and our_seq != esp_len_seq)
+        first_ask = need_length and rec["asked"] != esp_len_seq
+        if first_ask:
+            rec["asked"] = esp_len_seq
+        elif not need_length:
+            rec["asked"] = -1
+    if first_ask:
+        print(f"[len] {uid} reports length edit seq={esp_len_seq} but we have "
+              f"seq={our_seq} -- asking it to re-send (need_length)", flush=True)
     st = build_status()
     print(f"[{uid:>5}] angle={angle:7.2f}  mpu_ok={mpu_ok!s:<5}  seq={seq:<6} | "
           f"depth={st['depth_m']:6.3f}m  alarm={st['over_dig_alarm']!s:<5}  "
           f"sensor_ok={st['sensor_ok']}", flush=True)
-    return jsonify(ok=True)
+    return jsonify(ok=True, need_length=need_length)
 
 
 @app.post("/location")
@@ -406,6 +626,64 @@ def location_ingest():
     return jsonify(ok=True)
 
 
+@app.post("/length")
+def length_ingest():
+    """Accept the arm length an ESP32 unit was given on its OWN web page.
+
+        POST /length {"id":"beam","len_mm":4200,"seq":3,"ip":"192.168.0.61"}
+        ->           {"ok":true,"applied_mm":4200,"seq":3,"L1":4.2,"L2":1.0}
+
+    The unit sends this ONCE per edit and stops the moment we answer ok=true, so
+    the number crosses the network exactly once in the normal case; it keeps
+    retrying every 5 s only while we are unreachable. A repeat of a seq we already
+    applied is acked again -- a lost ACK must never leave the two sides
+    disagreeing -- but is logged only once.
+
+    beam -> L1, stick -> L2. The value is applied LIVE, persisted to the state
+    file, and mirrored into the mm text the HMI settings page prefills from, so
+    the panel shows the same number the operator typed on the unit. Last writer
+    wins between this and the panel's SAVE; --no-esp-length refuses this route if
+    you want the panel to be the only source.
+    """
+    d = request.get_json(silent=True) or {}
+    uid = d.get("id")
+    if uid not in lengths:
+        return jsonify(ok=False, error="unknown id (use 'stick' or 'beam')"), 400
+    if not ESP_LENGTH:
+        print(f"[len] refused {uid} length push (--no-esp-length)", flush=True)
+        return jsonify(ok=False,
+                       error="unit-supplied lengths disabled (--no-esp-length)"), 409
+    # The key states the unit, so do not let the mm/metre guesser second-guess it.
+    mm, _ = parse_length_mm(str(d.get("len_mm", "")), guess_units=False)
+    if not length_is_sane(mm):
+        print(f"[len] REFUSED {uid} length {d.get('len_mm')!r}: outside "
+              f"{LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f} mm", flush=True)
+        return jsonify(ok=False,
+                       error=f"len_mm must be {LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f}"), 400
+
+    seq = _as_int(d.get("seq", -1))
+    ck = "L1" if uid == "beam" else "L2"
+    mirror = "beam_len_mm" if uid == "beam" else "stick_len_mm"
+    with _lock:
+        rec = lengths[uid]
+        repeat = rec["seq"] == seq and abs(rec["mm"] - mm) < 0.5
+        rec.update(mm=mm, seq=seq, ts=time.monotonic(), asked=-1)
+        if d.get("ip"):
+            state[uid]["ip"] = str(d["ip"])[:40]
+        cfg[ck] = mm / 1000.0
+        _persist[mirror] = f"{mm:.0f}"
+        L1, L2 = cfg["L1"], cfg["L2"]
+    save_state()
+    if HMI is not None:
+        HMI.note_external_length()
+    if not repeat:
+        print(f"[len] {uid} web page assigned {mm:.0f} mm ({mm / 1000.0:.3f} m) "
+              f"seq={seq} -> {ck}   geometry now L1={L1:.3f} m L2={L2:.3f} m "
+              f"(persisted to {_state_path})", flush=True)
+    return jsonify(ok=True, applied_mm=round(mm, 1), seq=seq,
+                   L1=round(L1, 4), L2=round(L2, 4), repeat=repeat)
+
+
 @app.get("/status")
 def status():
     return jsonify(build_status())
@@ -413,15 +691,47 @@ def status():
 
 @app.post("/config")
 def config():
-    """Update target depth / calibration from the HMI or cloud at runtime."""
+    """Update target depth / calibration from the HMI or cloud at runtime.
+
+    Lengths may be given as metres (L1/L2) or as the millimetre values the HMI
+    uses (beam_len_mm/stick_len_mm). The mm form also updates the text mirror the
+    settings page prefills from, so a length set over HTTP and one typed on the
+    panel end up identical -- this is the way to initialise geometry when the
+    panel's length fields are not wired up yet.
+    """
     d = request.get_json(silent=True) or {}
+    rejected = {}
     with _lock:
         for k in ("L1", "L2", "boom_sign", "stick_sign",
-                  "boom_offset_deg", "stick_offset_deg", "target_depth"):
+                  "boom_offset_deg", "stick_offset_deg", "target_depth",
+                  "depth_offset"):
             if k in d:
                 cfg[k] = float(d[k])
+        for key, ck in (("beam_len_mm", "L1"), ("stick_len_mm", "L2")):
+            if key not in d:
+                continue
+            # The key names the unit, so do not second-guess it.
+            mm, _ = parse_length_mm(str(d[key]), guess_units=False)
+            if length_is_sane(mm):
+                cfg[ck] = mm / 1000.0
+                _persist[key] = f"{mm:.0f}"
+            else:
+                rejected[key] = d[key]
+        # Keep the mm mirror consistent when only L1/L2 were given.
+        for key, ck in (("beam_len_mm", "L1"), ("stick_len_mm", "L2")):
+            if key not in d and ck in d:
+                _persist[key] = f"{cfg[ck] * 1000.0:.0f}"
+        snap = dict(cfg)
     save_state()
-    return jsonify(ok=True, cfg=cfg)
+    if HMI is not None:          # adopt the new geometry as the BACK baseline
+        HMI.note_external_length()
+    print(f"[cfg] POST /config -> L1={snap['L1']:.3f} m L2={snap['L2']:.3f} m "
+          f"target={snap['target_depth']:.2f} m offset={snap['depth_offset']:.3f} m"
+          + (f"  REJECTED {rejected}" if rejected else ""), flush=True)
+    if rejected:
+        return jsonify(ok=False, cfg=snap, rejected=rejected,
+                       error=f"length must be {LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f} mm"), 400
+    return jsonify(ok=True, cfg=snap)
 
 
 @app.post("/rfid")
@@ -485,15 +795,23 @@ def decode_text(data):
     return bytes(out).decode("ascii", "replace").strip()
 
 
-def parse_length_mm(text):
+def parse_length_mm(text, guess_units=True):
     """Extract a length in millimetres from a DGUS TEXT field value.
 
     The beam/stick length VPs are TEXT inputs: the panel auto-uploads the value
     as an ASCII string (already decoded by decode_text). Be liberal about what
     the keypad may send -- keep only digits, a single decimal dot and a leading
     '-'; ignore spaces, a unit suffix ('mm') and stray separators (so '1100',
-    ' 1100 ', '1100 mm' and '1,100' all read as 1100). Returns a float (mm), or
-    None if the text holds no number.
+    ' 1100 ', '1100 mm' and '1,100' all read as 1100).
+
+    Unit guessing (keypad entry only): the operator types either mm ('4200') or
+    metres ('4.2') and the keypad cannot say which. A boom or stick is never 20 mm
+    long, so anything <= 20 is read as METRES and scaled up -- otherwise '4.2'
+    would set L1 = 0.0042 m and the depth would look frozen. Pass
+    guess_units=False where the caller already stated the unit (POST /config).
+
+    Returns (mm, unit) where unit is "mm" or "m" (the unit as TYPED), or
+    (None, None) if the text holds no number.
     """
     cleaned, seen_dot = [], False
     for ch in (text or ""):
@@ -506,11 +824,19 @@ def parse_length_mm(text):
             cleaned.append(ch)
     s = "".join(cleaned).rstrip(".")
     if s in ("", "-"):
-        return None
+        return None, None
     try:
-        return float(s)
+        v = float(s)
     except ValueError:
-        return None
+        return None, None
+    if guess_units and 0.0 < v <= 20.0:          # typed in metres
+        return v * 1000.0, "m"
+    return v, "mm"
+
+
+def length_is_sane(mm):
+    """True if `mm` is a believable boom/stick length (see LEN_MM_MIN/MAX)."""
+    return mm is not None and LEN_MM_MIN <= mm <= LEN_MM_MAX
 
 
 # ============================================================ HMI controller ==
@@ -526,23 +852,58 @@ class HmiController:
         self.hse_shown = False          # last HSE state written to the panel VP
         self.last_push = 0.0
         self.last_beep = 0.0
+        # Addresses come from the CLI so the panel can be re-mapped without a code
+        # edit. Each length is a LIST: [0] is polled/written, all are accepted.
+        self.beam_vps = tuple(args.beam_vp)
+        self.stick_vps = tuple(args.stick_vp)
+        self.vp_beam, self.vp_stick = self.beam_vps[0], self.stick_vps[0]
+        self.vp_ssid, self.vp_pw = args.ssid_vp, args.pw_vp
+        self.vp_save, self.vp_cancel = args.save_vp, args.cancel_vp
+        self.vp_page = args.page_flag_vp
+        self.len_bytes = args.len_bytes
+        self.settings_vps = frozenset(self.beam_vps + self.stick_vps
+                                      + (self.vp_ssid, self.vp_pw))
+        # Frames that arrive while we are polling a VP -- replayed by run().
+        self.deferred = deque(maxlen=32)
+        # Settings fields the panel has actually pushed (vs seeded from disk).
+        self.pushed = set()
+        self.warned_vps = set()         # so a system-VP warning prints once
         # Saved geometry baseline for a BACK-revert (refreshed on entry + SAVE).
         with _lock:
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
-        # Latest value the panel pushed for each settings VP (seeded from disk).
-        self.cache = {
-            VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
-            VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
-            VP_SSID:      str(_persist.get("wifi_ssid", "")),
-            VP_PASSWORD:  str(_persist.get("wifi_password", "")),
+        # Latest value the panel pushed for each settings field (seeded from disk).
+        self.cache = self._cache_from_disk()
+
+    # ----- settings working copy -------------------------------------------
+    @staticmethod
+    def _cache_from_disk():
+        """The last SAVEd settings, keyed by field name (not by VP -- the same
+        field is reachable at a canonical and a legacy address)."""
+        return {
+            "beam":  str(_persist.get("beam_len_mm", "")),
+            "stick": str(_persist.get("stick_len_mm", "")),
+            "ssid":  str(_persist.get("wifi_ssid", "")),
+            "pw":    str(_persist.get("wifi_password", "")),
         }
+
+    def field_of(self, addr):
+        """Settings field name for a received VP address, or None."""
+        if addr in self.beam_vps:
+            return "beam"
+        if addr in self.stick_vps:
+            return "stick"
+        if addr == self.vp_ssid:
+            return "ssid"
+        if addr == self.vp_pw:
+            return "pw"
+        return None
 
     # ----- received auto-upload frames -------------------------------------
     def handle_event(self, ev):
         if ev.cmd != CMD_READ:                       # ignore write ACKs / others
             return
         addr, val = ev.addr, ev.value
-        if addr == VP_PAGE_FLAG:                     # settings-page indicator
+        if addr == self.vp_page:                     # settings-page indicator
             if val == TRIGGER and not self.in_settings:
                 self._enter_settings()
             elif val != TRIGGER and self.in_settings:
@@ -552,56 +913,150 @@ class HmiController:
             self.dwin.write_single_reg(addr, 0x0000, ack=False)  # consume press
             self._tare_depth()
             return
-        if addr == VP_SAVE_BTN and val == TRIGGER:
+        if addr == self.vp_save and val == TRIGGER:
             self.dwin.write_single_reg(addr, 0x0000, ack=False)   # consume press
             self._save()
             return
-        if addr == VP_CANCEL_BTN and val == TRIGGER:
+        if addr == self.vp_cancel and val == TRIGGER:
             self.dwin.write_single_reg(addr, 0x0000, ack=False)
             self._cancel()
             return
-        if addr in SETTINGS_VPS:                     # text field auto-uploaded
+        field = self.field_of(addr)
+        if field:                                    # text field auto-uploaded
             text = decode_text(event_bytes(ev))
-            self.cache[addr] = text
-            shown = text if addr != VP_PASSWORD else "*" * len(text)
-            print(f"[hmi] recv 0x{addr:04X} = '{shown}'", flush=True)
+            self.cache[field] = text
+            self.pushed.add(field)
+            shown = text if field != "pw" else "*" * len(text)
+            print(f"[hmi] recv 0x{addr:04X} ({field}) = '{shown}'", flush=True)
             # Beam/stick: apply to the LIVE geometry so depth reflects it at once,
             # but do NOT persist -- SAVE writes to disk, BACK reverts (working vs
             # saved copy). ssid/pw are just cached until SAVE.
-            if addr in (VP_BEAM_LEN, VP_STICK_LEN):
-                which = "BEAM" if addr == VP_BEAM_LEN else "STICK"
-                print(f"[hmi] {which} LENGTH read from HMI: '{text}' mm", flush=True)
+            if field in ("beam", "stick"):
+                print(f"[hmi] {field.upper()} LENGTH read from HMI: '{text}'",
+                      flush=True)
                 if text:
-                    self._apply_length_live(addr, text)
+                    self._apply_length_live(field, text)
             # Confirm EVERY settings input with a 1-second beep (spec).
             self._confirm_beep()
             return
         # Any other 0x83 frame reaching here is a VP this program does not know.
         # Log it loudly: if the DGUS project uploads beam/stick/save on a
-        # different VP than expected, THIS line is how you find out.
+        # different VP than expected, THIS line is how you find out -- then point
+        # --beam-vp / --stick-vp at the address printed here.
         data = event_bytes(ev)
         print(f"[hmi] recv UNHANDLED VP 0x{addr:04X} value=0x{val:04X} "
               f"data={data.hex()} text='{decode_text(data)}'", flush=True)
 
+    # ----- reading a TEXT VP back off the panel -----------------------------
+    def _read_text_vp(self, addr, nbytes):
+        """Read a TEXT VP straight off the panel (0x83) and decode it.
+
+        This is the path that does NOT depend on the DGUS "data auto-upload"
+        checkbox: a Variable Data Input control stores the typed value in the VP
+        locally, so polling finds it even when the panel never pushes a frame.
+        Returns "" on timeout / when the VP sits on a self-updating kernel register
+        (where the bytes would be RTC or touch-status, not our text).
+
+        flush=False + the deferred sink keeps a button press that lands mid-poll.
+        """
+        hit = sys_reg_live_at(addr)
+        if hit:
+            self._warn_vp(addr, f"refusing to poll 0x{addr:04X}: DGUS {hit}")
+            return ""
+        try:
+            data = self.dwin.read_reg(addr, max(1, (nbytes + 1) // 2),
+                                      flush=False, sink=self.deferred.append)
+        except Exception as e:
+            print(f"[hmi] poll 0x{addr:04X} failed: {e}", flush=True)
+            return ""
+        return decode_text(data)
+
+    def _collect_length(self, field):
+        """Best available text for a length field, and where it came from.
+
+        Priority: what the panel actually PUSHED this visit -> what the VP holds
+        right now (direct poll) -> the last SAVEd value on disk. The poll is what
+        makes SAVE work on a panel whose length fields never auto-upload.
+
+        `self.pushed` matters: self.cache is seeded from disk, so trusting it
+        blindly would report the old saved number as if it were the operator's new
+        entry and never look at the panel at all.
+        """
+        text = (self.cache.get(field) or "").strip()
+        if field in self.pushed and length_is_sane(parse_length_mm(text)[0]):
+            return text, "auto-upload"
+        addr = self.vp_beam if field == "beam" else self.vp_stick
+        polled = self._read_text_vp(addr, self.len_bytes).strip()
+        if length_is_sane(parse_length_mm(polled)[0]):
+            return polled, f"polled 0x{addr:04X}"
+        if length_is_sane(parse_length_mm(text)[0]):
+            return text, "unchanged (last saved)"
+        return text or polled, "no usable value"
+
+    def note_external_length(self):
+        """The geometry was changed from OUTSIDE the panel -- an ESP32 unit's own
+        web page (POST /length) or POST /config.
+
+        Adopt it as the new BACK-revert baseline and reload the working cache from
+        disk, otherwise the next BACK press would silently restore the length that
+        was live when the operator last opened the settings page. Skipped while
+        that page is open: the operator's half-finished entry stays authoritative
+        until they press SAVE or BACK.
+        """
+        if self.in_settings:
+            print("[hmi] external length change while SETTINGS is open -- revert "
+                  "baseline untouched (press SAVE or BACK to resync the panel)",
+                  flush=True)
+            return
+        with _lock:
+            self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
+            self.cache = self._cache_from_disk()
+        print(f"[hmi] adopted external geometry: L1={self.saved_L1:.3f} m "
+              f"L2={self.saved_L2:.3f} m (settings page will prefill with it)",
+              flush=True)
+
     def _enter_settings(self):
         """Panel switched to the settings page. Snapshot the saved geometry for a
         possible BACK-revert, reset the working cache to what is on disk, and
-        prefill the Wi-Fi SSID field with the current (saved) network name."""
+        prefill the length + SSID fields so the operator edits the real current
+        values instead of a blank box."""
         self.in_settings = True
+        self.pushed.clear()
         with _lock:
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]
-            self.cache = {
-                VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
-                VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
-                VP_SSID:      str(_persist.get("wifi_ssid", "")),
-                VP_PASSWORD:  str(_persist.get("wifi_password", "")),
-            }
-            ssid = self.cache[VP_SSID]
-        try:                                         # show the current SSID
-            put_text(self.dwin, VP_SSID, ssid, SSID_LEN, ack=False)
-        except Exception as e:
-            print(f"[hmi] SSID prefill failed: {e}", flush=True)
-        print("[hmi] panel entered SETTINGS", flush=True)
+            self.cache = self._cache_from_disk()
+            snap = dict(self.cache)
+        self._prefill(snap)
+        print(f"[hmi] panel entered SETTINGS  beam={snap['beam'] or '-'}mm "
+              f"stick={snap['stick'] or '-'}mm ssid={snap['ssid'] or '-'}",
+              flush=True)
+
+    def _warn_vp(self, addr, msg):
+        """Print a per-VP warning once, so the event loop cannot spam the log."""
+        if addr not in self.warned_vps:
+            self.warned_vps.add(addr)
+            print(f"[hmi] {msg}", flush=True)
+
+    def _prefill(self, snap):
+        """Write the working copy into the panel's text fields.
+
+        A field parked on a self-updating kernel register is skipped: an 8-byte
+        text write to a legacy address like 0x0012 runs straight over the RTC and
+        the read-only PIC_Now page register.
+        """
+        for addr, text, pad in ((self.vp_beam, snap["beam"], self.len_bytes),
+                                (self.vp_stick, snap["stick"], self.len_bytes),
+                                (self.vp_ssid, snap["ssid"], SSID_LEN)):
+            hit = sys_reg_live_at(addr)
+            if hit:
+                self._warn_vp(addr, f"not writing 0x{addr:04X} (DGUS {hit}) -- move "
+                                    f"this VP to >= 0x{USER_VP_BASE:04X} in the "
+                                    f"DGUS project")
+                continue
+            try:
+                put_text(self.dwin, addr, text, pad, ack=False)
+            except Exception as e:
+                print(f"[hmi] prefill 0x{addr:04X} failed: {e}", flush=True)
 
     def _tare_depth(self):
         """Main-page tare key (VP 0x1000 == 0x00FF): set the zero offset to the
@@ -624,77 +1079,120 @@ class HmiController:
         except Exception:
             pass
 
-    def _apply_length_live(self, addr, text):
+    def _apply_length_live(self, field, text):
         """Apply a beam/stick length to the LIVE geometry so depth updates
         immediately. The VP is a TEXT field, so `text` is the decoded string
-        (e.g. '1100' or '1100 mm'); parse_length_mm pulls the number out
-        (mm -> m). Persisting waits for SAVE; BACK reverts. Junk is ignored."""
-        which = "beam (L1)" if addr == VP_BEAM_LEN else "stick (L2)"
-        mm = parse_length_mm(text)
+        (e.g. '1100', '1100 mm' or '1.1'); parse_length_mm pulls the number out
+        and normalises it to mm. Persisting waits for SAVE; BACK reverts.
+
+        An unparsable or out-of-range value is REJECTED, never applied -- writing
+        a half-typed '1' into cfg as 0.001 m is what makes the depth look dead.
+        """
+        which = "beam (L1)" if field == "beam" else "stick (L2)"
+        mm, unit = parse_length_mm(text)
         if mm is None:
             print(f"[hmi] {which} length text {text!r} has no number -- ignored",
                   flush=True)
             return
+        if not length_is_sane(mm):
+            print(f"[hmi] {which} length {mm:.0f} mm out of range "
+                  f"({LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f} mm) -- ignored", flush=True)
+            return
         metres = mm / 1000.0
         with _lock:
-            if addr == VP_BEAM_LEN:
-                cfg["L1"] = metres
-            else:
-                cfg["L2"] = metres
-        print(f"[hmi] {which} length applied LIVE: {mm:.0f} mm ({metres:.3f} m) "
-              f"-- not saved until SAVE", flush=True)
+            cfg["L1" if field == "beam" else "L2"] = metres
+        as_typed = "" if unit == "mm" else f" (typed as {unit})"
+        print(f"[hmi] {which} length applied LIVE: {mm:.0f} mm ({metres:.3f} m)"
+              f"{as_typed} -- not saved until SAVE", flush=True)
 
     def _save(self):
-        """SAVE button: persist the working copy (geometry + Wi-Fi) to disk and
-        make it the new saved baseline, then return to the main page."""
-        beam = self.cache.get(VP_BEAM_LEN, "")
-        stick = self.cache.get(VP_STICK_LEN, "")
-        ssid = self.cache.get(VP_SSID, "")
-        pw = self.cache.get(VP_PASSWORD, "")
-        print(f"[hmi] SAVE beam={beam!r}mm stick={stick!r}mm "
-              f"ssid={ssid!r} pw={'*' * len(pw)}", flush=True)
-        bmm, smm = parse_length_mm(beam), parse_length_mm(stick)   # TEXT -> mm
+        """SAVE button: resolve both lengths, persist the working copy (geometry +
+        Wi-Fi) to disk, make it the new saved baseline, echo the accepted values
+        back to the panel, then return to the main page.
+
+        The lengths are NOT taken from the auto-upload cache alone -- when that is
+        empty or junk the VP is polled directly (see _collect_length), so SAVE
+        works even on a panel whose length fields never push a frame. Everything
+        the operator just committed is printed as one block: these two numbers are
+        the whole geometry behind depth, the tare offset and initialisation, so
+        they must be visible in the log after every press.
+        """
+        beam, beam_src = self._collect_length("beam")
+        stick, stick_src = self._collect_length("stick")
+        ssid = self.cache.get("ssid", "")
+        pw = self.cache.get("pw", "")
+        bmm, bunit = parse_length_mm(beam)
+        smm, sunit = parse_length_mm(stick)
+        b_ok, s_ok = length_is_sane(bmm), length_is_sane(smm)
+
         with _lock:                                  # keep geometry in sync w/ text
-            if bmm is not None:
+            if b_ok:
                 cfg["L1"] = bmm / 1000.0
-            if smm is not None:
+                _persist["beam_len_mm"] = beam
+            if s_ok:
                 cfg["L2"] = smm / 1000.0
-            _persist.update(beam_len_mm=beam, stick_len_mm=stick,
-                            wifi_ssid=ssid, wifi_password=pw)
+                _persist["stick_len_mm"] = stick
+            _persist.update(wifi_ssid=ssid, wifi_password=pw)
             self.saved_L1, self.saved_L2 = cfg["L1"], cfg["L2"]   # new baseline
+            L1, L2, offset = cfg["L1"], cfg["L2"], cfg["depth_offset"]
         save_state()
+
+        def shown(text, mm, unit, ok, src):
+            if not ok:
+                return f"{text or '(empty)'!s} REJECTED [{src}]"
+            typed = "" if unit == "mm" else f", typed {unit}"
+            return f"{mm:.0f} mm ({mm / 1000.0:.3f} m{typed}) [{src}]"
+
+        print("[hmi] ================ SAVE pressed ================", flush=True)
+        print(f"[hmi] LENGTHS ARE SET   beam: {shown(beam, bmm, bunit, b_ok, beam_src)}",
+              flush=True)
+        print(f"[hmi]                   stick: {shown(stick, smm, sunit, s_ok, stick_src)}",
+              flush=True)
+        print(f"[hmi] geometry now      L1={L1:.3f} m  L2={L2:.3f} m   "
+              f"(depth = L1*sin(boom) + L2*sin(stick) - offset {offset:.3f} m)",
+              flush=True)
+        print(f"[hmi] wifi              ssid={ssid or '(unset)'} pw={'*' * len(pw)}",
+              flush=True)
+        print(f"[hmi] persisted to      {_state_path}", flush=True)
+        if not (b_ok and s_ok):
+            missing = " and ".join(n for n, ok in (("beam", b_ok), ("stick", s_ok))
+                                   if not ok)
+            print(f"[hmi] WARNING: {missing} length not saved -- the panel gave no "
+                  f"usable value. Check the field's VP + 'data auto-upload' in the "
+                  f"DGUS project, or pass --beam-vp/--stick-vp with the address "
+                  f"shown on an 'UNHANDLED VP' line above.", flush=True)
+        print("[hmi] ==============================================", flush=True)
+
+        # Show the accepted values back on the panel so the operator can see the
+        # edit stuck (and so a rejected entry visibly snaps back).
+        self._prefill({"beam": str(_persist.get("beam_len_mm", "")),
+                       "stick": str(_persist.get("stick_len_mm", "")),
+                       "ssid": ssid})
         # Wi-Fi SSID/pw are persisted to the state file ONLY (operator choice). To
         # actually switch the Pi's network, apply ssid/pw to NetworkManager /
         # wpa_supplicant here.
         self.dwin.buzzer(BuzzerDuration.BUZZ_250MSEC, ack=False)
         self.dwin.goto_page(self.args.main_page, ack=False)
         self.in_settings = False
+        self.pushed.clear()             # what is on disk is now the baseline
 
     def _cancel(self):
         """BACK button: discard edits. Restore live geometry to the saved
         baseline, reload the working cache from disk, and write the saved
         beam/stick/ssid back to the panel so the fields show the unchanged
         values (spec)."""
+        self.pushed.clear()
         with _lock:                                  # revert live geometry + cache
             cfg["L1"], cfg["L2"] = self.saved_L1, self.saved_L2
-            self.cache = {
-                VP_BEAM_LEN:  str(_persist.get("beam_len_mm", "")),
-                VP_STICK_LEN: str(_persist.get("stick_len_mm", "")),
-                VP_SSID:      str(_persist.get("wifi_ssid", "")),
-                VP_PASSWORD:  str(_persist.get("wifi_password", "")),
-            }
-            beam, stick, ssid = (self.cache[VP_BEAM_LEN],
-                                 self.cache[VP_STICK_LEN], self.cache[VP_SSID])
-        try:                                         # revert the on-screen fields
-            put_text(self.dwin, VP_BEAM_LEN,  beam,  LEN_TEXT_LEN, ack=False)
-            put_text(self.dwin, VP_STICK_LEN, stick, LEN_TEXT_LEN, ack=False)
-            put_text(self.dwin, VP_SSID,      ssid,  SSID_LEN, ack=False)
-        except Exception as e:
-            print(f"[hmi] revert write-back failed: {e}", flush=True)
+            self.cache = self._cache_from_disk()
+            snap = dict(self.cache)
+        self._prefill(snap)                          # revert the on-screen fields
         self.dwin.buzzer(BuzzerDuration.BUZZ_250MSEC, ack=False)
         self.dwin.goto_page(self.args.main_page, ack=False)
         self.in_settings = False
-        print("[hmi] BACK: edits discarded, fields restored", flush=True)
+        print(f"[hmi] BACK: edits discarded, fields restored to "
+              f"beam={snap['beam'] or '-'}mm stick={snap['stick'] or '-'}mm",
+              flush=True)
 
     # ----- writes to the panel ---------------------------------------------
     def _push_values(self, st):
@@ -764,11 +1262,34 @@ class HmiController:
     def run(self):
         print("[hmi] servicing panel (only this thread owns the serial port)",
               flush=True)
+        audit_vp_map((
+            ("depth text", VP_DEPTH_TEXT, DEPTH_LEN),
+            ("driver name", VP_DRIVER_NAME, NAME_LEN),
+            ("target depth", VP_TARGET_DEPTH, TARGET_LEN),
+            ("beam length", self.vp_beam, self.len_bytes),
+            ("stick length", self.vp_stick, self.len_bytes),
+            ("wifi ssid", self.vp_ssid, SSID_LEN),
+            ("wifi pw", self.vp_pw, PASS_LEN),
+            ("page flag", self.vp_page, 2),
+            ("save btn", self.vp_save, 2),
+            ("cancel btn", self.vp_cancel, 2),
+            ("tare key", VP_DEPTH_OFFSET, 2),
+            ("overdig alarm", self.args.overdig_vp, 2),
+            ("hse alarm", self.args.hse_vp, 2),
+        ))
+        print(f"[hmi] length VPs: beam accepts "
+              f"{', '.join(f'0x{a:04X}' for a in self.beam_vps)} / stick accepts "
+              f"{', '.join(f'0x{a:04X}' for a in self.stick_vps)} "
+              f"(first of each is polled + written back)", flush=True)
         while not _stop.is_set():
             try:
                 ev = self.dwin.read_event(timeout=0.05)
                 if ev is not None:
                     self.handle_event(ev)
+                # Frames that arrived while a handler was polling a VP: dispatch
+                # them now so a press is delayed, never dropped.
+                while self.deferred:
+                    self.handle_event(self.deferred.popleft())
             except Exception as e:
                 print(f"[hmi] read error: {e}", flush=True)
             now = time.monotonic()
@@ -1629,6 +2150,22 @@ class HseSocketServer:
 
 
 # ===================================================================== main ===
+def vp_addr(text):
+    """argparse type: one VP address, decimal or 0x-hex."""
+    try:
+        return int(text, 0) & 0xFFFF
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a VP address")
+
+
+def vp_addr_list(text):
+    """argparse type: comma-separated VP addresses; first is the canonical one."""
+    out = [vp_addr(p) for p in str(text).split(",") if p.strip()]
+    if not out:
+        raise argparse.ArgumentTypeError("expected at least one VP address")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Integrated excavation monitor: ESP32 ingest + DWIN HMI + "
@@ -1650,6 +2187,11 @@ def main():
                     help="initial target depth (m); the cloud overrides it at runtime")
     ap.add_argument("--stale-ms", type=int, default=cfg["stale_ms"])
     ap.add_argument("--gps-stale-ms", type=int, default=cfg["gps_stale_ms"])
+    ap.add_argument("--no-esp-length", action="store_true",
+                    help="ignore the arm length an ESP32 unit reports from its own "
+                         "web page (refuses POST /length and never asks for one); "
+                         "use this when the DWIN panel must be the ONLY source of "
+                         "the beam/stick geometry")
     # HMI / alarm
     ap.add_argument("--push-interval", type=float, default=1.0,
                     help="seconds between depth/target/name writes to the panel")
@@ -1695,10 +2237,33 @@ def main():
                     help="seconds between driver-directory refreshes")
     ap.add_argument("--no-rfid", action="store_true", help="disable the RFID thread")
     # HMI alarm VPs (panel-side data variables; add matching VPs in the DGUS project)
-    ap.add_argument("--overdig-vp", type=lambda x: int(x, 0), default=VP_OVERDIG_ALARM,
+    ap.add_argument("--overdig-vp", type=vp_addr, default=VP_OVERDIG_ALARM,
                     help="VP for the over-dig alarm flag (default 0x0401)")
-    ap.add_argument("--hse-vp", type=lambda x: int(x, 0), default=VP_HSE_ALARM,
+    ap.add_argument("--hse-vp", type=vp_addr, default=VP_HSE_ALARM,
                     help="VP for the HSE/person alarm flag (default 0x0400)")
+    # Settings-page VPs. Change these to match the DGUS project instead of editing
+    # the code -- an 'UNHANDLED VP 0x....' log line tells you the real address.
+    ap.add_argument("--beam-vp", type=vp_addr_list, default=list(BEAM_LEN_VPS),
+                    help="beam-length TEXT VP(s), comma separated; the FIRST is "
+                         "polled and written back, the rest are only accepted on "
+                         "receive (default 0x1200,0x0012 -- 0x0012 is the legacy "
+                         "address inside the DGUS RTC block)")
+    ap.add_argument("--stick-vp", type=vp_addr_list, default=list(STICK_LEN_VPS),
+                    help="stick-length TEXT VP(s), comma separated "
+                         "(default 0x2000,0x0016)")
+    ap.add_argument("--ssid-vp", type=vp_addr, default=VP_SSID,
+                    help="Wi-Fi SSID TEXT VP (default 0x0330)")
+    ap.add_argument("--pw-vp", type=vp_addr, default=VP_PASSWORD,
+                    help="Wi-Fi password TEXT VP (default 0x0350)")
+    ap.add_argument("--save-vp", type=vp_addr, default=VP_SAVE_BTN,
+                    help="SAVE button VP (default 0x0011)")
+    ap.add_argument("--cancel-vp", type=vp_addr, default=VP_CANCEL_BTN,
+                    help="BACK/cancel button VP (default 0x0010)")
+    ap.add_argument("--page-flag-vp", type=vp_addr, default=VP_PAGE_FLAG,
+                    help="'on settings page' flag VP (default 0x0030)")
+    ap.add_argument("--len-bytes", type=int, default=LEN_TEXT_LEN,
+                    help="byte width of the beam/stick TEXT fields; MUST equal the "
+                         f"string length set in the DGUS project (default {LEN_TEXT_LEN})")
     # equipment home location -- the map marker sits here until a live GNSS fix
     ap.add_argument("--home-lat", type=float, default=23.6100,
                     help="fallback latitude for the map marker (default: Muscat, Oman)")
@@ -1723,7 +2288,11 @@ def main():
                stale_ms=args.stale_ms, gps_stale_ms=args.gps_stale_ms)
     load_state(args.state_file)
 
-    global DIRECTORY
+    global DIRECTORY, ESP_LENGTH, HMI
+    ESP_LENGTH = not args.no_esp_length
+    if not ESP_LENGTH:
+        print("[main] unit-supplied lengths disabled (--no-esp-length): "
+              "POST /length is refused, the panel/CLI own the geometry", flush=True)
     DIRECTORY = DriverDirectory(args)
     if args.driver_csv_local:               # cloud refresh happens in the cloud thread
         try:
@@ -1736,6 +2305,7 @@ def main():
     if not dwin.is_connected():
         print("[warn] DWIN not responding -- check wiring / baud / UART setup", flush=True)
     hmi = HmiController(dwin, args)
+    HMI = hmi                       # so POST /length can refresh its BACK baseline
 
     threads = [threading.Thread(target=hmi.run, name="hmi", daemon=True)]
     if args.no_cloud:
@@ -1758,9 +2328,16 @@ def main():
         t.start()
 
     print(f"[main] HTTP on {args.http_host}:{args.http_port}  "
-          f"depth=L1*sin(boom)+L2*sin(stick)  L1={cfg['L1']} L2={cfg['L2']} "
-          f"target={cfg['target_depth']}m  (POST /ingest /location /rfid, "
+          f"depth=L1*sin(boom)+L2*sin(stick)  "
+          f"beam L1={cfg['L1']:.3f} m ({cfg['L1'] * 1000:.0f} mm)  "
+          f"stick L2={cfg['L2']:.3f} m ({cfg['L2'] * 1000:.0f} mm)  "
+          f"target={cfg['target_depth']}m  (POST /ingest /location /length /rfid, "
           f"GET /status, POST /config)", flush=True)
+    print(f"[main] ESP32 lengths: beam seq={lengths['beam']['seq']} "
+          f"stick seq={lengths['stick']['seq']}  -- each unit's own web page is at "
+          f"http://192.168.4.1/ (beam AP 'EXCAV-BEAM') and http://192.168.5.1/ "
+          f"(stick AP 'EXCAV-STICK'), or http://beam.local / http://stick.local "
+          f"once they are on this network", flush=True)
     try:
         # threaded=True so two ESP32s + /status pollers don't block each other.
         app.run(host=args.http_host, port=args.http_port, threaded=True)

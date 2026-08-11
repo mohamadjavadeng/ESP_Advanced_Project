@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raspberry Pi 4 — Wi-Fi station and access point at the same time</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow-x:hidden}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 90px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--dim);font-size:17px;margin:0 0 26px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:16px;border-top:1px solid var(--line);
+     letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px;letter-spacing:.01em}
+  h4{font-size:14px;margin:20px 0 6px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.06em}
+  h4.step{font-size:16.5px;color:var(--fg);text-transform:none;letter-spacing:-.005em;
+    font-weight:700;margin:32px 0 8px;padding-top:14px;border-top:1px dashed var(--line)}
+  h4.step code{font-size:.85em;text-transform:none;letter-spacing:0}
+  h2 .num{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:var(--code);color:var(--codefg);padding:1px 5px;border-radius:4px}
+  pre{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:14px 0}
+  pre code{background:none;padding:0;font-size:inherit}
+  .box{position:relative}
+  .box>button{position:absolute;top:7px;right:7px;font:600 11px/1 inherit;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--dim);background:var(--kbd);
+    border:1px solid var(--line);border-radius:5px;padding:5px 8px;cursor:pointer;opacity:.5;
+    transition:opacity .15s}
+  .box:hover>button{opacity:1}
+  .box>button:hover{color:var(--acc);border-color:var(--acc)}
+  .box>button.done{color:var(--ok);border-color:var(--ok)}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    font-weight:700;white-space:nowrap}
+  tbody tr:hover{background:var(--card)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin:16px 0}
+  .note,.warn,.ok,.bad{border-left:4px solid;border-radius:8px;padding:12px 15px;margin:16px 0}
+  .note{border-color:var(--acc);background:var(--acc-bg)}
+  .warn{border-color:var(--warn);background:var(--warn-bg)}
+  .ok{border-color:var(--ok);background:var(--ok-bg)}
+  .bad{border-color:var(--bad);background:var(--bad-bg)}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;
+    padding:2px 8px;border-radius:999px;white-space:nowrap;vertical-align:2px;
+    margin-left:8px}
+  .t-rec{background:var(--ok-bg);color:var(--ok)}
+  .t-alt{background:var(--warn-bg);color:var(--warn)}
+  .t-hw{background:var(--acc-bg);color:var(--acc)}
+  ol,ul{margin:10px 0;padding-left:24px}
+  li{margin:6px 0}
+  kbd{background:var(--kbd);border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:inherit;font-weight:600}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;column-gap:28px}
+  @media (max-width:620px){.toc ol{columns:1}}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+  a{color:var(--acc)}
+  .small{font-size:13.5px;color:var(--dim)}
+  .ascii{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.45;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:16px 0}
+  .q{font-size:15px;color:var(--dim);font-style:italic;margin:0 0 14px;
+     padding-left:12px;border-left:3px solid var(--line)}
+  .fname{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.03em;color:var(--dim);margin:18px 0 -8px;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Raspberry Pi 4 — Wi-Fi station <i>and</i> access point at the same time</h1>
+<p class="lede">One built-in radio, both roles, brought up automatically on every boot.
+<code>wlan0</code> stays a client on your normal Wi-Fi; a second virtual interface
+<code>uap0</code> runs a WPA2 access point at a fixed <code>192.168.50.1</code> that your
+ESP32s join. Copy-paste one script and reboot.</p>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#first">Read this first</a></li>
+    <li><a href="#can">Can the Pi 4 radio actually do it?</a></li>
+    <li><a href="#routeA">Route A — NetworkManager (recommended)</a></li>
+    <li><a href="#wrote">What the installer put on disk</a></li>
+    <li><a href="#verify">Verify</a></li>
+    <li><a href="#follow">Keep the AP on the station's channel</a></li>
+    <li><a href="#routeB">Route B — hostapd + dnsmasq</a></li>
+    <li><a href="#routeC">Route C — USB dongle (two radios)</a></li>
+    <li><a href="#esp32">Point an ESP32 at it</a></li>
+    <li><a href="#cheat">Day-to-day commands</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#uninstall">Uninstall</a></li>
+  </ol>
+</div>
+
+<h2 id="first"><span class="num">1</span>Read this first</h2>
+
+<p>Everything below reconfigures Wi-Fi on the machine you are probably SSH'd into. The design
+deliberately never touches <code>wlan0</code>, so your session should survive — but
+<code>iw</code>, <code>rfkill</code> and NetworkManager restarts can still drop a link.</p>
+
+<div class="warn">
+<b>Have a way back in.</b> Do the first install over Ethernet, or with a keyboard and monitor
+on the Pi, or at least know how to pull the SD card. If you lose the network, the
+<a href="#uninstall">uninstall block</a> is two commands from a local console.
+</div>
+
+<div class="ascii">                    ┌──────────────── Raspberry Pi 4 ───────────────┐
+                    │   ONE physical radio (brcmfmac, 2.4/5 GHz)    │
+  router / phone    │                                               │
+   ────────wifi─────┼──▶ wlan0   STATION   ── internet, cloud, apt  │
+                    │      │                                        │
+                    │      └── same chip ⇒ ONE CHANNEL for both     │
+                    │                                               │
+   ESP32 STICK ─────┼──▶ uap0    ACCESS POINT   192.168.50.1        │
+   ESP32 BEAM  ─────┼──▶         WPA2 · DHCP · NAT to wlan0         │
+   laptop      ─────┼──▶                                            │
+                    │                                               │
+                    │   a server bound to 0.0.0.0 is reachable      │
+                    │   on BOTH interfaces at once                  │
+                    └───────────────────────────────────────────────┘</div>
+
+<h2 id="can"><span class="num">2</span>Can the Pi 4 radio actually do it?</h2>
+
+<p class="q">"Is simultaneous station + AP possible, or do I need a second adapter?"</p>
+
+<p><b>Possible, no extra hardware.</b> The Broadcom chip supports one station link plus one
+AP concurrently. What you <i>cannot</i> do is expose both through a single interface name —
+so you add a second <b>virtual</b> netdev on the same PHY. Ask the driver yourself rather
+than trusting a blog post:</p>
+
+<div class="box"><button>copy</button><pre><code>iw list | grep -A 8 'valid interface combinations'</code></pre></div>
+
+<p>On a Pi 4 you get something like this — the second bullet is the one that matters:</p>
+
+<pre><code>valid interface combinations:
+     * #{ managed } &lt;= 1, #{ P2P-device } &lt;= 1, #{ P2P-client, P2P-GO } &lt;= 1,
+       total &lt;= 3, #channels &lt;= 2
+     * #{ managed } &lt;= 1, #{ AP } &lt;= 1, #{ P2P-client } &lt;= 1, #{ P2P-device } &lt;= 1,
+       total &lt;= 4, #channels &lt;= 1</code></pre>
+
+<p><code>#{ managed } &lt;= 1, #{ AP } &lt;= 1</code> is the permission slip: one station, one AP,
+together. <code>#channels &lt;= 1</code> is the price.</p>
+
+<div class="warn">
+<b>The one hard limit: both roles share a single channel.</b> Whatever channel
+<code>wlan0</code> associates on, the AP is forced onto. If <code>wlan0</code> later joins a
+router on a different channel, the AP's advertised channel goes stale and clients silently
+stop associating. <a href="#follow">Section 6</a> is the fix, and it is not optional on a
+machine that meets a new modem every week.
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Limit</th><th>What it means for you</th></tr></thead>
+  <tbody>
+    <tr><td>One channel for both roles</td><td>Handled by the follower in §6, or removed entirely by a USB dongle (§8)</td></tr>
+    <tr><td>2.4 GHz AP only, in practice</td><td>No 5 GHz AP while concurrent. Irrelevant here — the ESP32 is 2.4 GHz only. But pin your <b>upstream</b> router/hotspot to 2.4 GHz too, or the AP cannot follow it</td></tr>
+    <tr><td>Shared airtime</td><td>Station traffic and AP traffic split one radio. Fine at telemetry rates (1–10 Hz); not fine for streaming video both ways</td></tr>
+    <tr><td>~8 AP clients before it sulks</td><td>Plenty for two ESP32s and a laptop</td></tr>
+    <tr><td><code>nmcli device wifi hotspot</code> does <b>not</b> work</td><td>That command reconfigures <code>wlan0</code> itself and <b>drops your station link</b>. This is exactly why <code>uap0</code> exists</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="routeA"><span class="num">3</span>Route A — NetworkManager<span class="tag t-rec">recommended</span></h2>
+
+<p>Raspberry Pi OS Bookworm and Trixie manage Wi-Fi with NetworkManager. Let it run the AP
+too: an <code>ipv4.method=shared</code> profile gives you a fixed address, a DHCP server
+<i>and</i> NAT out through <code>wlan0</code> for free — no <code>hostapd</code>, no
+<code>dnsmasq</code> config, no iptables rules to maintain. Devices on the AP get real
+internet.</p>
+
+<p>Check you are on this route (<code>running</code> ⇒ yes; if the command is missing, use
+<a href="#routeB">Route B</a>):</p>
+
+<div class="box"><button>copy</button><pre><code>systemctl is-active NetworkManager &amp;&amp; nmcli --version</code></pre></div>
+
+<div class="note">
+<b>Migrating from this repo's <code>ap_sta_setup.py</code>?</b> That script is the Route B
+(hostapd + dnsmasq) design, and two of its leftovers make Route A fail outright: its
+<code>hostapd</code>/<code>dnsmasq</code> daemons still holding <code>uap0</code>, and
+<code>/etc/NetworkManager/conf.d/unmanaged-uap0.conf</code>, which tells NetworkManager to
+ignore the very interface the new profile needs. <b>Step 2</b> below clears both. Your SSID,
+password and <code>192.168.50.1</code> stay the same, so the ESP32 firmware needs no edits.
+</div>
+
+<h3>Step by step — the whole of Route A, in order</h3>
+
+<p>Eighteen steps. Run them in one SSH session, top to bottom; steps 11–14 share a shell
+variable, so do not open a new terminal in the middle. Every step is safe to repeat.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>#</th><th>Step</th><th>#</th><th>Step</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><a href="#s1">Confirm you are on this route</a></td>
+        <td>10</td><td><a href="#s10">Enable it, and create <code>uap0</code> now</a></td></tr>
+    <tr><td>2</td><td><a href="#s2">Clear any previous hostapd install</a></td>
+        <td>11</td><td><a href="#s11">Read the station's channel</a></td></tr>
+    <tr><td>3</td><td><a href="#s3">Ask the radio if it can do both</a></td>
+        <td>12</td><td><a href="#s12">Create the AP profile</a></td></tr>
+    <tr><td>4</td><td><a href="#s4">Install packages</a></td>
+        <td>13</td><td><a href="#s13">Configure the AP profile</a></td></tr>
+    <tr><td>5</td><td><a href="#s5">Set the regulatory domain</a></td>
+        <td>14</td><td><a href="#s14">Activate the AP</a></td></tr>
+    <tr><td>6</td><td><a href="#s6">Get <code>wlan0</code> onto your Wi-Fi</a></td>
+        <td>15</td><td><a href="#s15">Write the channel follower</a></td></tr>
+    <tr><td>7</td><td><a href="#s7">Write the shared settings file</a></td>
+        <td>16</td><td><a href="#s16">Schedule the follower</a></td></tr>
+    <tr><td>8</td><td><a href="#s8">Write the interface-creation script</a></td>
+        <td>17</td><td><a href="#s17">Verify</a></td></tr>
+    <tr><td>9</td><td><a href="#s9">Write the startup unit</a></td>
+        <td>18</td><td><a href="#s18">Reboot and prove it comes back</a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4 class="step" id="s1">Step 1 — Confirm you are on this route</h4>
+<p>Route A needs NetworkManager. Bookworm and Trixie have it; older Lite images may not.</p>
+<div class="box"><button>copy</button><pre><code>systemctl is-active NetworkManager        # want: active
+nmcli --version                           # want: 1.42 or newer
+grep VERSION_CODENAME /etc/os-release     # bookworm / trixie</code></pre></div>
+<p class="small"><code>inactive</code> or <code>nmcli: command not found</code> ⇒ stop here
+and use <a href="#routeB">Route B</a> instead.</p>
+
+<h4 class="step" id="s2">Step 2 — Clear any previous hostapd install</h4>
+<p>Skip only if this Pi has never run <code>ap_sta_setup.py</code> or a hostapd hotspot guide.
+The <code>unmanaged-uap0.conf</code> line is the one that silently breaks everything later
+with <i>"No suitable device found"</i>.</p>
+<div class="box"><button>copy</button><pre><code>sudo systemctl disable --now hostapd dnsmasq ap-sta 2&gt;/dev/null
+sudo rm -f /etc/NetworkManager/conf.d/unmanaged-uap0.conf \
+           /etc/systemd/system/hostapd.service.d/override.conf \
+           /etc/systemd/system/dnsmasq.service.d/override.conf \
+           /etc/dnsmasq.d/uap0.conf
+sudo sed -i '/^denyinterfaces uap0/d' /etc/dhcpcd.conf 2&gt;/dev/null
+sudo systemctl daemon-reload
+sudo systemctl reload NetworkManager
+
+# nothing should be left holding the AP or port 53
+systemctl is-enabled hostapd dnsmasq 2&gt;/dev/null      # want: disabled / not-found</code></pre></div>
+<p class="small">The <code>dnsmasq</code> <i>package</i> can stay installed — only its service
+must be off, because NetworkManager runs its own instance.</p>
+
+<h4 class="step" id="s3">Step 3 — Ask the radio if it can do both</h4>
+<p>Do this before building anything on top of it. You want a combination line naming
+<b>both</b> <code>managed</code> and <code>AP</code>.</p>
+<div class="box"><button>copy</button><pre><code>iw list | grep -A 8 'valid interface combinations'</code></pre></div>
+<pre><code>     * #{ managed } &lt;= 1, #{ AP } &lt;= 1, #{ P2P-client } &lt;= 1, #{ P2P-device } &lt;= 1,
+       total &lt;= 4, #channels &lt;= 1          &lt;-- this line is your permission slip</code></pre>
+<p class="small">No such line ⇒ this radio cannot do concurrency at all; go to
+<a href="#routeC">Route C</a>. <code>#channels &lt;= 1</code> is why steps 11 and 15 exist.</p>
+
+<h4 class="step" id="s4">Step 4 — Install packages</h4>
+<p><code>dnsmasq-base</code>, <b>not</b> <code>dnsmasq</code>. NetworkManager spawns its own
+instance for <code>ipv4.method=shared</code>; the full package adds a second daemon that binds
+<code>:53</code> and fights it.</p>
+<div class="box"><button>copy</button><pre><code>sudo apt update
+sudo apt install -y iw rfkill dnsmasq-base
+dpkg -s dnsmasq-base | grep ^Status        # want: install ok installed</code></pre></div>
+
+<h4 class="step" id="s5">Step 5 — Set the regulatory domain</h4>
+<p>An unset country leaves the reg domain at <code>00 / DFS-UNSET</code>, and the AP either
+refuses to start or comes up at minimum power. Use your own two-letter code.</p>
+<div class="box"><button>copy</button><pre><code>sudo raspi-config nonint do_wifi_country US     # GB DE OM AE IR ...
+sudo rfkill unblock wlan
+
+iw reg get | head -3                            # must NOT say 'country 00: DFS-UNSET'
+rfkill list wlan                                # both blocks: no</code></pre></div>
+
+<h4 class="step" id="s6">Step 6 — Get <code>wlan0</code> onto your Wi-Fi</h4>
+<p>The station link must already work; the AP is added <i>alongside</i> it and never replaces
+it. Also kill power save here — it costs seconds of latency on ESP32 POSTs.</p>
+<div class="box"><button>copy</button><pre><code>nmcli dev wifi list ifname wlan0
+sudo nmcli dev wifi connect "YOUR_SSID" password "YOUR_PASSWORD" ifname wlan0
+
+iw dev wlan0 link                               # Connected to ..., channel N
+nmcli -g GENERAL.CONNECTION,IP4.ADDRESS dev show wlan0
+
+# turn off power save on whatever profile wlan0 just used
+STA=$(nmcli -g GENERAL.CONNECTION dev show wlan0 | head -1)
+sudo nmcli connection modify "$STA" 802-11-wireless.powersave 2
+sudo nmcli connection up "$STA"</code></pre></div>
+<div class="warn"><b>2.4 GHz upstream, please.</b> If <code>iw dev wlan0 link</code> reports a
+channel above 14, the station is on 5 GHz and a concurrent 2.4 GHz AP has no channel to share
+with it. Force the router or phone hotspot to 2.4 GHz now, or accept
+<a href="#routeC">Route C</a>.</div>
+
+<h4 class="step" id="s7">Step 7 — Write the shared settings file</h4>
+<p>Both scripts source this, so the interface names live in exactly one place.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/default/rpi-ap-sta &gt;/dev/null &lt;&lt;'EOF'
+# Shared by uap0-up.sh and ap-channel-follow.sh.
+STA_IFACE=wlan0
+AP_IFACE=uap0
+AP_TYPE=__ap
+AP_CON=rpi-ap
+EOF
+cat /etc/default/rpi-ap-sta</code></pre></div>
+
+<h4 class="step" id="s8">Step 8 — Write the interface-creation script</h4>
+<p>This is the actual concurrency trick: a second virtual netdev on the same PHY, given a
+different MAC.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/uap0-up.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Add a second virtual netdev on the SAME physical radio as the station, so one
+# chip can be a client and an access point at once. Idempotent.
+#
+# Ordered BEFORE NetworkManager on purpose: brcmfmac frequently returns
+# EBUSY (-16) when asked to add an interface while wlan0 is already associated.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+rfkill unblock wlan || true
+
+# systemd .device units can lose the race against module load at boot, so wait
+# for the radio here rather than trusting the ordering alone.
+for _ in $(seq 1 30); do
+    [[ -d /sys/class/net/$STA_IFACE ]] &amp;&amp; break
+    sleep 1
+done
+[[ -d /sys/class/net/$STA_IFACE ]] || { echo "$STA_IFACE never appeared" &gt;&amp;2; exit 1; }
+
+iw dev | grep -qw "$AP_IFACE" \
+    || iw dev "$STA_IFACE" interface add "$AP_IFACE" type "$AP_TYPE"
+
+# Both netdevs inherit the one MAC of the one chip. Flip the locally-administered
+# bit so the AP and the station are distinct L2 endpoints -- sharing a MAC breaks
+# ARP and DHCP for anything that joins the AP.
+mac=$(cat "/sys/class/net/$STA_IFACE/address")
+want="$(printf '%02x' $(( 0x${mac:0:2} ^ 0x02 )))${mac:2}"
+if [[ "$(cat /sys/class/net/$AP_IFACE/address)" != "$want" ]]; then
+    ip link set dev "$AP_IFACE" down
+    ip link set dev "$AP_IFACE" address "$want"
+fi
+ip link set dev "$AP_IFACE" up
+EOF
+sudo chmod 755 /usr/local/sbin/uap0-up.sh
+sudo bash -n /usr/local/sbin/uap0-up.sh      # syntax check, changes nothing</code></pre></div>
+
+<h4 class="step" id="s9">Step 9 — Write the startup unit</h4>
+<p><b>This is the "command in startup code" you asked about.</b> The two lines that matter are
+<code>ExecStart</code> and <code>Before=NetworkManager.service</code> — the ordering is what
+makes it survive cold boots instead of only working when you type it by hand.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/systemd/system/uap0.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Create uap0 virtual AP interface on the wlan0 radio
+Wants=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan0.device
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/uap0-up.sh
+ExecStop=-/usr/sbin/iw dev uap0 del
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemd-analyze verify /etc/systemd/system/uap0.service   # silence = valid</code></pre></div>
+<p class="small">Do <b>not</b> use <code>crontab @reboot</code> for this. Cron starts after
+NetworkManager, which is the one ordering that reliably fails with <code>EBUSY (-16)</code>.</p>
+
+<h4 class="step" id="s10">Step 10 — Enable it, and create <code>uap0</code> now</h4>
+<div class="box"><button>copy</button><pre><code>sudo systemctl daemon-reload
+sudo systemctl enable uap0.service
+sudo systemctl start uap0.service
+
+iw dev                              # uap0 listed, 'type AP', same phy#0 as wlan0
+ip -br link show uap0 wlan0         # the two MACs MUST differ (bit flipped)
+systemctl status uap0 --no-pager</code></pre></div>
+<div class="warn"><b>If <code>start</code> fails with <code>Device or resource busy
+(-16)</code>:</b> that is expected — the radio is busy with your live association. Nothing is
+broken and the unit is already enabled, so it will run at boot when the radio is idle.
+Finish steps 11–16, then <code>sudo reboot</code> and re-check.</div>
+
+<h4 class="step" id="s11">Step 11 — Read the station's channel</h4>
+<p>One radio, one channel. Capture it into a variable and keep the same shell for steps
+12–14.</p>
+<div class="box"><button>copy</button><pre><code>CHAN=$(iw dev wlan0 info | awk '$1=="channel"{print $2}')
+CHAN=${CHAN:-6}                                  # fallback if wlan0 is not associated
+[ "$CHAN" -gt 14 ] &amp;&amp; { echo "wlan0 is on 5 GHz ch $CHAN -- AP falls back to 6"; CHAN=6; }
+echo "AP channel = $CHAN"</code></pre></div>
+
+<h4 class="step" id="s12">Step 12 — Create the AP profile</h4>
+<p>Bind it to <code>uap0</code>, never to <code>wlan0</code>.</p>
+<div class="box"><button>copy</button><pre><code>sudo nmcli connection delete rpi-ap 2&gt;/dev/null      # ignore 'unknown connection'
+sudo nmcli connection add type wifi ifname uap0 con-name rpi-ap \
+     autoconnect yes ssid RPi_AP</code></pre></div>
+<div class="bad"><b>Never use <code>nmcli device wifi hotspot</code> here.</b> It reconfigures
+<code>wlan0</code> itself and drops your station link — and with it your SSH session. The
+whole point of <code>uap0</code> is to avoid that command.</div>
+
+<h4 class="step" id="s13">Step 13 — Configure the AP profile</h4>
+<p>One command. Put your real password in <code>wifi-sec.psk</code> (8–63 characters).</p>
+<div class="box"><button>copy</button><pre><code>sudo nmcli connection modify rpi-ap \
+     802-11-wireless.mode ap \
+     802-11-wireless.band bg \
+     802-11-wireless.channel "$CHAN" \
+     802-11-wireless.powersave 2 \
+     wifi-sec.key-mgmt wpa-psk \
+     wifi-sec.proto rsn \
+     wifi-sec.pairwise ccmp \
+     wifi-sec.group ccmp \
+     wifi-sec.psk 'raspberry123' \
+     ipv4.method shared \
+     ipv4.addresses 192.168.50.1/24 \
+     ipv6.method disabled \
+     connection.autoconnect-priority 10 \
+     connection.autoconnect-retries 0</code></pre></div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Property</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><code>802-11-wireless.mode</code></td><td><code>ap</code></td><td>Makes this an access point instead of a client. The single most important line</td></tr>
+    <tr><td><code>.band</code> · <code>.channel</code></td><td><code>bg</code> · <code>$CHAN</code></td><td>2.4 GHz, pinned to the station's channel. One radio cannot hold two</td></tr>
+    <tr><td><code>.powersave</code></td><td><code>2</code> (disable)</td><td>An AP that sleeps adds latency and drops associations</td></tr>
+    <tr><td><code>wifi-sec.key-mgmt</code></td><td><code>wpa-psk</code></td><td>Pre-shared key</td></tr>
+    <tr><td><code>.proto</code> · <code>.pairwise</code> · <code>.group</code></td><td><code>rsn</code> · <code>ccmp</code> · <code>ccmp</code></td><td>WPA2-CCMP only. Explicitly excludes WPA1 and TKIP, which some ESP32 stacks will happily negotiate down to</td></tr>
+    <tr><td><code>wifi-sec.psk</code></td><td>your password</td><td>8–63 characters, or the profile is rejected</td></tr>
+    <tr><td><code>ipv4.method</code></td><td><code>shared</code></td><td><b>Does three jobs:</b> static address, DHCP server for AP clients, and NAT out via the default route. This is why Route A needs no dnsmasq config and no iptables rules</td></tr>
+    <tr><td><code>ipv4.addresses</code></td><td><code>192.168.50.1/24</code></td><td>The fixed address your ESP32s hard-code. Defines the DHCP subnet too</td></tr>
+    <tr><td><code>ipv6.method</code></td><td><code>disabled</code></td><td>Nothing on this AP needs it; avoids router-advertisement noise</td></tr>
+    <tr><td><code>connection.autoconnect-priority</code></td><td><code>10</code></td><td>Comes up ahead of other profiles at boot</td></tr>
+    <tr><td><code>connection.autoconnect-retries</code></td><td><code>0</code></td><td>Retry forever. The default gives up after 4 attempts — fatal if <code>uap0</code> appears a moment late</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4 class="step" id="s14">Step 14 — Activate the AP</h4>
+<div class="box"><button>copy</button><pre><code>sudo nmcli connection up rpi-ap
+
+nmcli -f GENERAL.STATE,IP4.ADDRESS connection show rpi-ap   # activated · 192.168.50.1/24
+nmcli -g ipv4.method connection show rpi-ap                 # shared
+iw dev uap0 info | grep -E 'type|channel|ssid'
+iw dev wlan0 link | head -2                                 # station still up</code></pre></div>
+<p>Now join <code>RPi_AP</code> from a phone. You should get a <code>192.168.50.x</code>
+address <b>and</b> working internet — that is <code>ipv4.method=shared</code> doing DHCP and
+NAT for you.</p>
+
+<h4 class="step" id="s15">Step 15 — Write the channel follower</h4>
+<p>Without this, the day <code>wlan0</code> joins a router on a different channel your AP
+keeps beaconing a stale one and the ESP32s silently stop associating. Nothing logs an error.
+This is the failure that wastes days in the field.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/ap-channel-follow.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# One radio cannot hold two channels (see: iw list -&gt; '#channels &lt;= 1'). When the
+# station joins a router on a different channel, the AP profile's channel goes
+# stale and clients silently stop associating. Re-sync and reactivate.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+cur=$(iw dev "$STA_IFACE" info 2&gt;/dev/null | awk '$1=="channel"{print $2}')
+[ -z "${cur:-}" ] &amp;&amp; exit 0                    # not associated: nothing to follow
+
+if [ "$cur" -gt 14 ]; then
+    logger -t ap-follow "$STA_IFACE is on 5 GHz ch $cur; the concurrent AP is 2.4 GHz and cannot follow. Pin the upstream to 2.4 GHz or add a USB dongle."
+    exit 0
+fi
+
+want=$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")
+[ "$cur" = "$want" ] &amp;&amp; exit 0                 # in sync: cheap no-op
+
+logger -t ap-follow "$STA_IFACE moved to ch $cur (AP had ${want:-unset}) -- resyncing"
+nmcli connection modify "$AP_CON" 802-11-wireless.band bg 802-11-wireless.channel "$cur"
+nmcli connection up "$AP_CON"
+EOF
+sudo chmod 755 /usr/local/sbin/ap-channel-follow.sh
+
+sudo /usr/local/sbin/ap-channel-follow.sh      # run once by hand
+journalctl -t ap-follow -n 10 --no-pager       # silent = already in sync</code></pre></div>
+
+<h4 class="step" id="s16">Step 16 — Schedule the follower</h4>
+<p>A timer, not a cron job, so it inherits systemd ordering and logs to the journal.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/systemd/system/ap-channel-follow.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Re-sync the AP channel to the station channel
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-channel-follow.sh
+EOF
+
+sudo tee /etc/systemd/system/ap-channel-follow.timer &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Check every minute whether the station changed channel
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ap-channel-follow.timer
+systemctl list-timers ap-channel-follow.timer --no-pager    # confirm it is scheduled</code></pre></div>
+
+<h4 class="step" id="s17">Step 17 — Verify</h4>
+<div class="box"><button>copy</button><pre><code># one PHY, two netdevs, one of them type AP
+iw dev
+
+# distinct MACs, AP has the fixed address
+ip -br link show wlan0 uap0
+ip -br addr show uap0
+
+# NetworkManager state
+nmcli -f GENERAL.STATE,IP4.ADDRESS connection show rpi-ap
+nmcli device status
+
+# both roles on the same channel -- these two numbers must match
+iw dev wlan0 info | grep channel
+iw dev uap0  info | grep channel
+
+# station link untouched, and internet still works through it
+iw dev wlan0 link
+ping -c2 -I wlan0 1.1.1.1
+
+# everything enabled for next boot
+systemctl is-enabled uap0.service ap-channel-follow.timer</code></pre></div>
+
+<h4 class="step" id="s18">Step 18 — Reboot and prove it comes back</h4>
+<p>Unattended bring-up is the whole point. An install that only works until the next power cut
+is not finished.</p>
+<div class="box"><button>copy</button><pre><code>sudo reboot
+
+# after it comes back:
+iw dev | grep -A3 uap0
+nmcli -f GENERAL.STATE connection show rpi-ap        # activated
+systemctl status uap0 --no-pager
+journalctl -u uap0 -t ap-follow -b --no-pager        # clean boot, no EBUSY
+
+# and from a client on the AP:
+sudo iw dev uap0 station dump | grep -E 'Station|signal:'
+cat /var/lib/NetworkManager/dnsmasq-uap0.leases</code></pre></div>
+
+<div class="ok"><b>Done.</b> <code>wlan0</code> is a station on your Wi-Fi, <code>uap0</code>
+is a WPA2 AP at <code>192.168.50.1</code> handing out DHCP and NAT, both on one radio, and
+both return on every boot without you touching anything.</div>
+
+<h3>Or: one script that runs all eighteen steps</h3>
+
+<p>Same result, one paste. Edit the settings at the top first. Idempotent — re-run it after
+changing the SSID or password.</p>
+
+<span class="fname">rpi4-ap-sta.sh &nbsp;·&nbsp; sudo bash rpi4-ap-sta.sh</span>
+<div class="box"><button>copy</button><pre><code>#!/usr/bin/env bash
+# Raspberry Pi 4: Wi-Fi STATION and ACCESS POINT at the same time, on the single
+# built-in radio, brought up automatically on every boot.
+#
+#   wlan0  station -> joins your normal Wi-Fi / phone hotspot, keeps internet
+#   uap0   AP      -> fixed 192.168.50.1, WPA2; NetworkManager does DHCP + NAT
+#
+# Run once:  sudo bash rpi4-ap-sta.sh
+# Then:      sudo reboot          # proves it comes back unattended
+
+set -euo pipefail
+
+# ---------------------------- settings -------------------------------------- #
+AP_SSID="RPi_AP"
+AP_PASS="raspberry123"          # 8..63 characters
+AP_ADDR="192.168.50.1/24"       # the Pi's fixed address on its own AP
+COUNTRY="US"                    # your regulatory domain: GB DE OM IR AE ...
+AP_CON="rpi-ap"                 # NetworkManager profile name
+AP_IFACE="uap0"                 # virtual AP interface we create
+STA_IFACE="wlan0"               # the physical radio, stays the station
+AP_TYPE="__ap"                  # if NM refuses to activate, retry with: managed
+# ---------------------------------------------------------------------------- #
+
+[[ $EUID -eq 0 ]] || { echo "run me with sudo" &gt;&amp;2; exit 1; }
+(( ${#AP_PASS} &gt;= 8 )) || { echo "AP_PASS needs 8+ characters for WPA2" &gt;&amp;2; exit 1; }
+command -v nmcli &gt;/dev/null || { echo "no nmcli -- use Route B (hostapd) instead" &gt;&amp;2; exit 1; }
+
+echo "== 0/6  stand down any previous hostapd-style (Route B) install =="
+# If this Pi already ran raspberry_pi/ap_sta_setup.py, two leftovers will break
+# Route A outright, so clear them rather than debugging them later:
+#   * hostapd/dnsmasq daemons still owning uap0 and :53
+#   * an NM conf.d rule marking uap0 unmanaged -> "No suitable device found"
+for svc in hostapd dnsmasq ap-sta; do
+    if systemctl is-enabled --quiet "$svc" 2&gt;/dev/null || systemctl is-active --quiet "$svc" 2&gt;/dev/null; then
+        echo "  disabling $svc (was a Route B component)"
+        systemctl disable --now "$svc" &gt;/dev/null 2&gt;&amp;1 || true
+    fi
+done
+for f in /etc/NetworkManager/conf.d/unmanaged-uap0.conf \
+         /etc/systemd/system/hostapd.service.d/override.conf \
+         /etc/systemd/system/dnsmasq.service.d/override.conf \
+         /etc/dnsmasq.d/uap0.conf; do
+    [[ -e $f ]] &amp;&amp; { echo "  removing $f"; rm -f "$f"; }
+done
+grep -q '^denyinterfaces uap0' /etc/dhcpcd.conf 2&gt;/dev/null \
+    &amp;&amp; sed -i '/^denyinterfaces uap0/d' /etc/dhcpcd.conf
+systemctl daemon-reload
+systemctl reload NetworkManager 2&gt;/dev/null || true
+
+echo "== 1/6  packages =="
+# dnsmasq-base, NOT dnsmasq. NetworkManager spawns its own instance for
+# ipv4.method=shared; the full dnsmasq package adds a SECOND daemon that binds
+# :53 and fights it. If the full package is installed, leaving its service
+# disabled (step 0) is enough -- no need to uninstall it.
+apt-get update -qq
+apt-get install -y -qq iw rfkill dnsmasq-base
+
+echo "== 2/6  what the radio admits it can do =="
+# Want a combination line with both '#{ managed }' and '#{ AP }'.
+# '#channels &lt;= 1' on that line is the shared-channel limit -- see the follower below.
+iw list | grep -A 8 'valid interface combinations' || true
+
+echo "== 3/6  regulatory domain + radio unblock =="
+# An unset country leaves the reg domain at 00/DFS-UNSET and the AP either refuses
+# to start or comes up at minimum power.
+raspi-config nonint do_wifi_country "$COUNTRY" 2&gt;/dev/null || iw reg set "$COUNTRY"
+rfkill unblock wlan
+
+echo "== 4/6  settings + boot-time creation of $AP_IFACE =="
+cat &gt; /etc/default/rpi-ap-sta &lt;&lt;EOF
+# Shared by uap0-up.sh and ap-channel-follow.sh. Written by rpi4-ap-sta.sh.
+STA_IFACE=$STA_IFACE
+AP_IFACE=$AP_IFACE
+AP_TYPE=$AP_TYPE
+AP_CON=$AP_CON
+EOF
+
+cat &gt; /usr/local/sbin/uap0-up.sh &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Add a second virtual netdev on the SAME physical radio as the station, so one
+# chip can be a client and an access point at once. Idempotent.
+#
+# Ordered BEFORE NetworkManager on purpose: brcmfmac frequently returns
+# EBUSY (-16) when asked to add an interface while wlan0 is already associated.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+rfkill unblock wlan || true
+
+# systemd .device units can lose the race against module load at boot, so wait
+# for the radio here rather than trusting the ordering alone.
+for _ in $(seq 1 30); do
+    [[ -d /sys/class/net/$STA_IFACE ]] &amp;&amp; break
+    sleep 1
+done
+[[ -d /sys/class/net/$STA_IFACE ]] || { echo "$STA_IFACE never appeared" &gt;&amp;2; exit 1; }
+
+iw dev | grep -qw "$AP_IFACE" \
+    || iw dev "$STA_IFACE" interface add "$AP_IFACE" type "$AP_TYPE"
+
+# Both netdevs inherit the one MAC of the one chip. Flip the locally-administered
+# bit so the AP and the station are distinct L2 endpoints -- sharing a MAC breaks
+# ARP and DHCP for anything that joins the AP.
+mac=$(cat "/sys/class/net/$STA_IFACE/address")
+want="$(printf '%02x' $(( 0x${mac:0:2} ^ 0x02 )))${mac:2}"
+if [[ "$(cat /sys/class/net/$AP_IFACE/address)" != "$want" ]]; then
+    ip link set dev "$AP_IFACE" down
+    ip link set dev "$AP_IFACE" address "$want"
+fi
+ip link set dev "$AP_IFACE" up
+EOF
+chmod 755 /usr/local/sbin/uap0-up.sh
+
+cat &gt; /etc/systemd/system/uap0.service &lt;&lt;EOF
+[Unit]
+Description=Create $AP_IFACE virtual AP interface on the $STA_IFACE radio
+Wants=sys-subsystem-net-devices-$STA_IFACE.device
+After=sys-subsystem-net-devices-$STA_IFACE.device
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/uap0-up.sh
+ExecStop=-/usr/sbin/iw dev $AP_IFACE del
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "== 5/6  NetworkManager AP profile =="
+# Pin the AP to whatever channel the station is on -- one radio, one channel.
+CHAN=$(iw dev "$STA_IFACE" info 2&gt;/dev/null | awk '$1=="channel"{print $2}')
+CHAN=${CHAN:-6}
+(( CHAN &gt; 14 )) &amp;&amp; { echo "  (!) $STA_IFACE is on 5 GHz ch $CHAN; concurrent AP is 2.4 GHz."; \
+                     echo "      Falling back to ch 6 -- pin your upstream to 2.4 GHz."; CHAN=6; }
+echo "  AP channel = $CHAN"
+
+nmcli connection delete "$AP_CON" &gt;/dev/null 2&gt;&amp;1 || true
+nmcli connection add type wifi ifname "$AP_IFACE" con-name "$AP_CON" \
+      autoconnect yes ssid "$AP_SSID" &gt;/dev/null
+nmcli connection modify "$AP_CON" \
+      802-11-wireless.mode ap \
+      802-11-wireless.band bg \
+      802-11-wireless.channel "$CHAN" \
+      802-11-wireless.powersave 2 \
+      wifi-sec.key-mgmt wpa-psk \
+      wifi-sec.proto rsn \
+      wifi-sec.pairwise ccmp \
+      wifi-sec.group ccmp \
+      wifi-sec.psk "$AP_PASS" \
+      ipv4.method shared \
+      ipv4.addresses "$AP_ADDR" \
+      ipv6.method disabled \
+      connection.autoconnect-priority 10 \
+      connection.autoconnect-retries 0
+# ipv4.method=shared is doing three jobs: the static address above, a DHCP server
+# for AP clients, and NAT/masquerade out via the default route (wlan0). That is
+# why this route needs no dnsmasq.conf and no iptables lines of your own.
+
+echo "== 6/6  channel follower + enable everything =="
+cat &gt; /usr/local/sbin/ap-channel-follow.sh &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# One radio cannot hold two channels (see: iw list -&gt; '#channels &lt;= 1'). When the
+# station joins a router on a different channel, the AP profile's channel goes
+# stale and clients silently stop associating. Re-sync and reactivate.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+cur=$(iw dev "$STA_IFACE" info 2>/dev/null | awk '$1=="channel"{print $2}')
+[ -z "${cur:-}" ] &amp;&amp; exit 0                    # not associated: nothing to follow
+
+if [ "$cur" -gt 14 ]; then
+    logger -t ap-follow "$STA_IFACE is on 5 GHz ch $cur; the concurrent AP is 2.4 GHz and cannot follow. Pin the upstream to 2.4 GHz or add a USB dongle."
+    exit 0
+fi
+
+want=$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")
+[ "$cur" = "$want" ] &amp;&amp; exit 0                 # in sync: cheap no-op
+
+logger -t ap-follow "$STA_IFACE moved to ch $cur (AP had ${want:-unset}) -- resyncing"
+nmcli connection modify "$AP_CON" 802-11-wireless.band bg 802-11-wireless.channel "$cur"
+nmcli connection up "$AP_CON"
+EOF
+chmod 755 /usr/local/sbin/ap-channel-follow.sh
+
+cat &gt; /etc/systemd/system/ap-channel-follow.service &lt;&lt;'EOF'
+[Unit]
+Description=Re-sync the AP channel to the station channel
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-channel-follow.sh
+EOF
+
+cat &gt; /etc/systemd/system/ap-channel-follow.timer &lt;&lt;'EOF'
+[Unit]
+Description=Check every minute whether the station changed channel
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable uap0.service ap-channel-follow.timer &gt;/dev/null
+systemctl start ap-channel-follow.timer
+
+if systemctl start uap0.service; then
+    nmcli connection up "$AP_CON" || echo "  (!) profile did not activate -- see Troubleshooting"
+else
+    echo "  (!) could not create $AP_IFACE right now: the radio is busy with an"
+    echo "      active association. It IS enabled at boot, where the unit runs"
+    echo "      before NetworkManager. Just reboot:  sudo reboot"
+fi
+
+cat &lt;&lt;SUMMARY
+
+================================================================
+Concurrent Wi-Fi station + access point installed.
+  AP SSID    : $AP_SSID
+  AP password: $AP_PASS
+  Pi AP IP   : ${AP_ADDR%%/*}   (fixed)
+  DHCP + NAT : NetworkManager (ipv4.method=shared)
+  AP channel : $CHAN            (must match $STA_IFACE)
+  Station    : $STA_IFACE, untouched -- still your internet path
+
+Verify:
+  iw dev                                  # $AP_IFACE listed, type AP
+  ip -br addr show $AP_IFACE              # ${AP_ADDR%%/*}
+  nmcli -f GENERAL.STATE con show $AP_CON # activated
+  iw dev $STA_IFACE link                  # still associated as a client
+  sudo iw dev $AP_IFACE station dump      # who joined the AP
+
+Reboot to confirm unattended bring-up:  sudo reboot
+================================================================
+SUMMARY</code></pre></div>
+
+<div class="note">
+<b>Answering your "a command in startup code" question directly:</b> yes — and the startup
+command is exactly the two lines inside <code>uap0.service</code>. Everything else in that
+installer is settings and safety. The minimum viable startup command is
+<code>iw dev wlan0 interface add uap0 type __ap</code>; the script adds a wait loop, a
+distinct MAC, and correct ordering, which is the difference between "works when I type it"
+and "works after every cold boot in the field".
+<br><br>
+A <code>crontab @reboot</code> line would also fire it, but cron starts <i>after</i>
+NetworkManager, which is the one ordering that reliably fails with EBUSY. Use the systemd
+unit.
+</div>
+
+<h2 id="wrote"><span class="num">4</span>What the installer put on disk</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Path</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>/etc/default/rpi-ap-sta</code></td><td>Interface names and profile name, sourced by both scripts</td></tr>
+    <tr><td><code>/usr/local/sbin/uap0-up.sh</code></td><td>Creates <code>uap0</code> on the <code>wlan0</code> PHY, gives it a distinct MAC</td></tr>
+    <tr><td><code>/etc/systemd/system/uap0.service</code></td><td><b>The startup hook.</b> Oneshot, ordered <code>Before=NetworkManager.service</code></td></tr>
+    <tr><td>NM profile <code>rpi-ap</code></td><td>AP mode, WPA2-CCMP, fixed IP, <code>ipv4.method=shared</code> ⇒ DHCP + NAT. Lives in <code>/etc/NetworkManager/system-connections/</code></td></tr>
+    <tr><td><code>/usr/local/sbin/ap-channel-follow.sh</code></td><td>Re-pins the AP channel when the station roams</td></tr>
+    <tr><td><code>ap-channel-follow.{service,timer}</code></td><td>Runs the follower 90 s after boot, then every 60 s</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="small">Nothing here modifies your station profile, <code>wpa_supplicant.conf</code>,
+or <code>wlan0</code>'s addressing.</p>
+
+<h2 id="verify"><span class="num">5</span>Verify</h2>
+
+<div class="box"><button>copy</button><pre><code># both interfaces exist on one PHY, one of them type AP
+iw dev
+
+# the AP has its fixed address
+ip -br addr show uap0
+
+# NetworkManager thinks the AP is up, and shared-mode is on
+nmcli -f GENERAL.STATE,IP4.ADDRESS connection show rpi-ap
+nmcli -g ipv4.method connection show rpi-ap          # -> shared
+
+# the station link is untouched
+iw dev wlan0 link
+
+# who has joined the AP (MAC, signal, rate) and what leases were handed out
+sudo iw dev uap0 station dump
+cat /var/lib/NetworkManager/dnsmasq-uap0.leases
+ip neigh show dev uap0
+
+# both roles really are on the same channel
+iw dev wlan0 info | grep channel
+iw dev uap0  info | grep channel</code></pre></div>
+
+<div class="ok">
+<b>Good state:</b> <code>iw dev</code> lists <code>wlan0</code> (type managed) and
+<code>uap0</code> (type AP) under one <code>phy#0</code>; both report the same channel;
+<code>rpi-ap</code> is <code>activated</code>; and a phone joining <code>RPi_AP</code> gets a
+<code>192.168.50.x</code> lease <i>and</i> can browse the internet.
+</div>
+
+<h2 id="follow"><span class="num">6</span>Keep the AP on the station's channel</h2>
+
+<p>This is the failure that wastes days, so it is worth stating plainly: the AP does not
+break loudly. It keeps beaconing on a channel the radio is no longer really on, and the
+ESP32s just stop associating. Nothing logs an error.</p>
+
+<p>The installer already deployed and enabled the follower. Confirm and watch it:</p>
+
+<div class="box"><button>copy</button><pre><code>systemctl list-timers ap-channel-follow.timer     # scheduled?
+sudo /usr/local/sbin/ap-channel-follow.sh         # run it by hand, once
+journalctl -t ap-follow -f                        # watch it resync</code></pre></div>
+
+<p>Trigger it deliberately: move the Pi to a router on another channel, or retune your phone
+hotspot, then watch <code>journalctl -t ap-follow</code> log
+<code>wlan0 moved to ch N … resyncing</code>.</p>
+
+<div class="warn">
+<b>The follower cannot rescue a 5 GHz upstream.</b> If <code>wlan0</code> joins on channel 36
+or above, a concurrent 2.4 GHz AP has nowhere to follow to. The script logs that and gives
+up rather than writing an invalid profile. Fix it upstream: force the router or hotspot to
+2.4 GHz, or go to <a href="#routeC">Route C</a>.
+</div>
+
+<h2 id="routeB"><span class="num">7</span>Route B — hostapd + dnsmasq<span class="tag t-alt">no NetworkManager</span></h2>
+
+<p>Use this on Bullseye, on Lite images still using <code>dhcpcd</code>, or anywhere you want
+the AP fully independent of NetworkManager. Same <code>uap0</code> trick; you supply the AP
+daemon and DHCP server yourself. This repo already ships a scripted version of exactly this
+at <code>raspberry_pi/ap_sta_setup.py</code> — the blocks below are the same thing by hand,
+<i>plus the NAT that script omits</i>.</p>
+
+<div class="box"><button>copy</button><pre><code>sudo apt install -y hostapd dnsmasq iw rfkill
+sudo systemctl unmask hostapd          # Raspberry Pi OS ships it masked</code></pre></div>
+
+<span class="fname">/etc/hostapd/hostapd.conf</span>
+<div class="box"><button>copy</button><pre><code># Access point on the virtual interface, concurrent with the wlan0 station.
+country_code=US
+interface=uap0
+driver=nl80211
+ssid=RPi_AP
+hw_mode=g
+channel=6                  # MUST equal `iw dev wlan0 info | grep channel`
+ieee80211n=1
+wmm_enabled=1
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=raspberry123
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP</code></pre></div>
+
+<span class="fname">/etc/dnsmasq.d/uap0.conf</span>
+<div class="box"><button>copy</button><pre><code># DHCP for the AP only.
+# port=0 disables dnsmasq's DNS server so it cannot fight systemd-resolved on :53.
+# bind-dynamic tolerates uap0 appearing after dnsmasq has started.
+interface=uap0
+bind-dynamic
+port=0
+dhcp-range=192.168.50.10,192.168.50.100,255.255.255.0,24h
+dhcp-option=uap0,3,192.168.50.1        # default gateway = the Pi
+dhcp-option=uap0,6,1.1.1.1,8.8.8.8     # DNS, since we disabled our own</code></pre></div>
+
+<p>Reuse <code>uap0-up.sh</code> and <code>uap0.service</code> from Route A verbatim, but add
+the address there (Route A let NetworkManager do it) and drop the
+<code>Before=NetworkManager.service</code> line if NM is absent:</p>
+
+<div class="box"><button>copy</button><pre><code># append to /usr/local/sbin/uap0-up.sh
+ip addr flush dev "$AP_IFACE"
+ip addr add 192.168.50.1/24 dev "$AP_IFACE"</code></pre></div>
+
+<p>Stop the network manager from stealing <code>uap0</code> back — one of these, whichever
+you run:</p>
+
+<div class="box"><button>copy</button><pre><code># NetworkManager present but you want hostapd to own the AP:
+printf '[keyfile]\nunmanaged-devices=interface-name:uap0\n' \
+  | sudo tee /etc/NetworkManager/conf.d/unmanaged-uap0.conf
+sudo systemctl reload NetworkManager
+
+# dhcpcd instead:
+printf '\n# concurrent AP+STA: uap0.service owns this interface\ndenyinterfaces uap0\n' \
+  | sudo tee -a /etc/dhcpcd.conf</code></pre></div>
+
+<p>Order the daemons after the interface exists, then enable:</p>
+
+<div class="box"><button>copy</button><pre><code>for u in hostapd dnsmasq; do
+  sudo mkdir -p /etc/systemd/system/$u.service.d
+  printf '[Unit]\nAfter=uap0.service\nRequires=uap0.service\n' \
+    | sudo tee /etc/systemd/system/$u.service.d/override.conf
+done
+sudo systemctl daemon-reload
+sudo systemctl enable --now uap0 hostapd dnsmasq</code></pre></div>
+
+<h3>NAT — give AP clients internet (Route A does this for you; here you must)</h3>
+
+<div class="box"><button>copy</button><pre><code># persistent kernel forwarding
+printf 'net.ipv4.ip_forward=1\n' | sudo tee /etc/sysctl.d/99-ap-sta-forward.conf
+sudo sysctl --system
+
+# masquerade AP traffic out through the station interface, and persist it
+sudo apt install -y iptables-persistent      # answer "yes" to saving current rules
+sudo iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
+sudo iptables -A FORWARD -i uap0 -o wlan0 -j ACCEPT
+sudo iptables -A FORWARD -i wlan0 -o uap0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo netfilter-persistent save</code></pre></div>
+
+<p>The channel follower for this route edits the config file instead of an NM profile:</p>
+
+<div class="box"><button>copy</button><pre><code>#!/usr/bin/env bash
+# /usr/local/sbin/ap-channel-follow.sh  (hostapd variant)
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+CONF=/etc/hostapd/hostapd.conf
+
+cur=$(iw dev wlan0 info | awk '$1=="channel"{print $2}')
+[ -z "${cur:-}" ] &amp;&amp; exit 0
+[ "$cur" -gt 14 ] &amp;&amp; { logger -t ap-follow "wlan0 on 5 GHz ch $cur; 2.4 GHz AP cannot follow"; exit 0; }
+
+want=$(awk -F= '$1=="channel"{print $2}' "$CONF")
+[ "$cur" = "$want" ] &amp;&amp; exit 0
+
+logger -t ap-follow "wlan0 moved to ch $cur (hostapd had $want) -- resyncing"
+sed -i "s/^channel=.*/channel=$cur/" "$CONF"
+systemctl restart hostapd</code></pre></div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>Route A — NetworkManager</th><th>Route B — hostapd + dnsmasq</th></tr></thead>
+  <tbody>
+    <tr><td>Moving parts</td><td>1 profile, 1 unit</td><td>2 daemons, 3 config files, 2 overrides, iptables</td></tr>
+    <tr><td>DHCP for AP clients</td><td>automatic</td><td>you write <code>dhcp-range</code></td></tr>
+    <tr><td>Internet for AP clients</td><td>automatic (NAT)</td><td>you write the iptables rules</td></tr>
+    <tr><td>Works without NM</td><td>no</td><td>yes</td></tr>
+    <tr><td>Fine-grained 802.11 control</td><td>limited to NM's settings</td><td>full <code>hostapd.conf</code></td></tr>
+    <tr><td>OS fit</td><td>Bookworm, Trixie</td><td>Bullseye and older, Lite images</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="routeC"><span class="num">8</span>Route C — USB dongle<span class="tag t-hw">two radios</span></h2>
+
+<p>A ~$10 USB Wi-Fi adapter deletes the entire shared-channel problem: run the AP on one
+radio and the station on the other, on independent channels, and throw the follower away.
+If the Pi is going somewhere you cannot easily reach, buy the dongle.</p>
+
+<div class="box"><button>copy</button><pre><code># confirm the dongle can do AP mode at all before relying on it
+iw list | grep -A 12 'Supported interface modes'      # need '* AP'
+
+# then, in Route A's installer:
+#   AP_IFACE="wlan1"      &lt;-- the dongle is already a real interface
+# and delete the 'iw dev ... interface add' + MAC lines from uap0-up.sh;
+# keep the unit only if you still want the rfkill/wait-for-device guard.</code></pre></div>
+
+<p>Pin the name so it cannot swap with the built-in radio across reboots — match on the
+dongle's own MAC:</p>
+
+<div class="box"><button>copy</button><pre><code>cat /sys/class/net/wlan1/address        # e.g. 00:c0:ca:11:22:33
+
+sudo tee /etc/udev/rules.d/70-wifi-names.rules &lt;&lt;'EOF'
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="00:c0:ca:11:22:33", NAME="wlanap"
+EOF
+sudo reboot</code></pre></div>
+
+<p class="small">Then use <code>wlanap</code> as <code>AP_IFACE</code>. With two radios you
+can also run the AP on 5 GHz — though not for ESP32s, which are 2.4 GHz only.</p>
+
+<h2 id="esp32"><span class="num">9</span>Point an ESP32 at it</h2>
+
+<p>Nothing special is required on the ESP32 side — the AP is an ordinary WPA2 network. The Pi
+is always at the fixed address, so hard-code it and skip discovery:</p>
+
+<div class="box"><button>copy</button><pre><code>// ESP32 joins the Pi's concurrent AP. The Pi's IP never moves, so no mDNS needed.
+const char* AP_SSID = "RPi_AP";
+const char* AP_PASS = "raspberry123";
+const char* PI_URL  = "http://192.168.50.1:8080/ingest";
+
+WiFi.mode(WIFI_STA);
+WiFi.setSleep(false);              // power save adds seconds of latency to POSTs
+WiFi.begin(AP_SSID, AP_PASS);
+while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print('.'); }
+Serial.printf("\nESP32 %s -> Pi %s\n",
+              WiFi.localIP().toString().c_str(), PI_URL);</code></pre></div>
+
+<div class="note">
+<b>Bind your Pi-side server to <code>0.0.0.0</code>, not <code>192.168.50.1</code>.</b> Then
+the same service answers on the AP <i>and</i> on the station link — the ESP32s reach it over
+<code>uap0</code> while you reach it from your laptop over the house network. Flask:
+<code>app.run(host="0.0.0.0", port=8080)</code>.
+</div>
+
+<h2 id="cheat"><span class="num">10</span>Day-to-day commands</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Task</th><th>Command</th></tr></thead>
+  <tbody>
+    <tr><td>Change AP password</td><td><code>sudo nmcli con modify rpi-ap wifi-sec.psk 'newsecret' &amp;&amp; sudo nmcli con up rpi-ap</code></td></tr>
+    <tr><td>Change AP SSID</td><td><code>sudo nmcli con modify rpi-ap wifi-ssid 'NewName' &amp;&amp; sudo nmcli con up rpi-ap</code></td></tr>
+    <tr><td>Join a new upstream Wi-Fi</td><td><code>sudo nmcli dev wifi connect "SSID" password "PW" ifname wlan0</code></td></tr>
+    <tr><td>List nearby networks</td><td><code>nmcli dev wifi list ifname wlan0</code></td></tr>
+    <tr><td>All profiles / all devices</td><td><code>nmcli con show</code> · <code>nmcli dev status</code></td></tr>
+    <tr><td>Who is on the AP</td><td><code>sudo iw dev uap0 station dump | grep -E 'Station|signal:'</code></td></tr>
+    <tr><td>DHCP leases handed out</td><td><code>cat /var/lib/NetworkManager/dnsmasq-uap0.leases</code></td></tr>
+    <tr><td>AP down / up without a reboot</td><td><code>sudo nmcli con down rpi-ap</code> · <code>sudo nmcli con up rpi-ap</code></td></tr>
+    <tr><td>Recreate <code>uap0</code> from scratch</td><td><code>sudo systemctl restart uap0 &amp;&amp; sudo nmcli con up rpi-ap</code></td></tr>
+    <tr><td>Kill station power save</td><td><code>sudo nmcli con modify "&lt;sta-profile&gt;" 802-11-wireless.powersave 2</code></td></tr>
+    <tr><td>Force the channel resync now</td><td><code>sudo /usr/local/sbin/ap-channel-follow.sh; journalctl -t ap-follow -n 20</code></td></tr>
+    <tr><td>Logs that matter</td><td><code>journalctl -u NetworkManager -u uap0 -t ap-follow -b --no-pager</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="trouble"><span class="num">11</span>Troubleshooting</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>command failed: Device or resource busy (-16)</code> when adding <code>uap0</code></td>
+      <td>brcmfmac will not add an interface while <code>wlan0</code> is associated</td>
+      <td>Expected when installing on a live link. <code>sudo reboot</code> — the unit runs before NetworkManager, when the radio is idle</td>
+    </tr>
+    <tr>
+      <td><code>Connection activation failed: No suitable device found</code></td>
+      <td><code>uap0</code> does not exist, or NM was told to ignore it</td>
+      <td><code>systemctl status uap0</code>; then <code>grep -r unmanaged /etc/NetworkManager/conf.d/</code> and delete any rule naming <code>uap0</code></td>
+    </tr>
+    <tr>
+      <td>NM refuses the profile / logs an AP-mode error</td>
+      <td>wpa_supplicant is unhappy with a netdev created as <code>__ap</code></td>
+      <td>Set <code>AP_TYPE="managed"</code> at the top of the installer and re-run. Still failing ⇒ use <a href="#routeB">Route B</a></td>
+    </tr>
+    <tr>
+      <td>SSID visible, clients associate but get no IP</td>
+      <td><code>dnsmasq-base</code> missing, or the <b>full</b> <code>dnsmasq</code> package is running a rival daemon</td>
+      <td><code>sudo apt install dnsmasq-base</code>; if <code>dnsmasq.service</code> is active, <code>sudo systemctl disable --now dnsmasq</code>. Then <code>journalctl -u NetworkManager -b | grep -i dnsmasq</code></td>
+    </tr>
+    <tr>
+      <td>Clients get an IP but no internet</td>
+      <td>NAT missing — or <code>wlan0</code> itself has no route</td>
+      <td>Route A: check <code>nmcli -g ipv4.method con show rpi-ap</code> is <code>shared</code>. Route B: apply the §7 NAT block. Either way test upstream first: <code>ping -c2 -I wlan0 1.1.1.1</code></td>
+    </tr>
+    <tr>
+      <td><b>Was working, now the ESP32s cannot join</b></td>
+      <td><code>wlan0</code> roamed to a new channel; the AP is stale. The most common field failure</td>
+      <td>Compare <code>iw dev wlan0 info</code> with <code>iw dev uap0 info</code>. Run the §6 follower and confirm its timer is enabled</td>
+    </tr>
+    <tr>
+      <td>AP disappears the moment <code>wlan0</code> connects</td>
+      <td>Same root cause — the driver dragged the radio to the station's channel</td>
+      <td>Same fix. If <code>wlan0</code> landed on 5 GHz, force the upstream to 2.4 GHz</td>
+    </tr>
+    <tr>
+      <td>AP will not start at all; <code>iw reg get</code> shows <code>country 00: DFS-UNSET</code></td>
+      <td>No regulatory domain ⇒ no legal channels</td>
+      <td><code>sudo raspi-config nonint do_wifi_country GB</code> (your code), then <code>sudo reboot</code></td>
+    </tr>
+    <tr>
+      <td><code>iw list</code> shows no combination with both <code>managed</code> and <code>AP</code></td>
+      <td>This radio/firmware genuinely cannot do concurrency</td>
+      <td>No software fix. <a href="#routeC">Route C</a></td>
+    </tr>
+    <tr>
+      <td>Wi-Fi dead, <code>rfkill list</code> says <code>Soft blocked: yes</code></td>
+      <td>Radio soft-blocked (often by an unset country)</td>
+      <td><code>sudo rfkill unblock wlan</code>; set the country as above so it stops coming back</td>
+    </tr>
+    <tr>
+      <td>AP clients see high, jittery latency</td>
+      <td>Power save on either interface, plus shared airtime</td>
+      <td><code>sudo iw dev wlan0 set power_save off</code>; the AP profile already sets <code>powersave 2</code>. Persist it on the station profile via <code>nmcli</code></td>
+    </tr>
+    <tr>
+      <td>Two devices on the AP cannot see each other / ARP is strange</td>
+      <td><code>uap0</code> and <code>wlan0</code> ended up sharing one MAC</td>
+      <td><code>ip -br link show uap0 wlan0</code> — the addresses must differ. <code>sudo systemctl restart uap0</code> re-applies the flipped locally-administered bit</td>
+    </tr>
+    <tr>
+      <td>Lost SSH right after install</td>
+      <td>Rare, but <code>rfkill</code>/NM restarts can bounce the station</td>
+      <td>From a local console: <code>sudo systemctl disable --now uap0 &amp;&amp; sudo nmcli con down rpi-ap</code>, then reboot and investigate with <code>journalctl -b -1</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="uninstall"><span class="num">12</span>Uninstall</h2>
+
+<p>Removes both routes and returns <code>wlan0</code> to a plain station.</p>
+
+<div class="box"><button>copy</button><pre><code>#!/usr/bin/env bash
+# Undo the concurrent AP. wlan0 and your station profile are left alone.
+set -uo pipefail
+
+# Route A
+sudo nmcli connection down rpi-ap 2>/dev/null
+sudo nmcli connection delete rpi-ap 2>/dev/null
+
+# Route B
+sudo systemctl disable --now hostapd dnsmasq 2>/dev/null
+sudo rm -f /etc/dnsmasq.d/uap0.conf \
+           /etc/systemd/system/{hostapd,dnsmasq}.service.d/override.conf \
+           /etc/NetworkManager/conf.d/unmanaged-uap0.conf \
+           /etc/sysctl.d/99-ap-sta-forward.conf
+
+# shared parts
+sudo systemctl disable --now uap0.service ap-channel-follow.timer 2>/dev/null
+sudo rm -f /etc/systemd/system/uap0.service \
+           /etc/systemd/system/ap-channel-follow.{service,timer} \
+           /usr/local/sbin/{uap0-up.sh,ap-channel-follow.sh} \
+           /etc/default/rpi-ap-sta
+sudo iw dev uap0 del 2>/dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl reload NetworkManager 2>/dev/null
+iw dev            # only wlan0 should remain</code></pre></div>
+
+<p class="small">If you used Route B's NAT, also drop the rules:
+<code>sudo iptables -t nat -F POSTROUTING &amp;&amp; sudo iptables -F FORWARD &amp;&amp; sudo netfilter-persistent save</code>.
+And if you appended <code>denyinterfaces uap0</code> to <code>/etc/dhcpcd.conf</code>, remove
+that line by hand.</p>
+
+<hr style="border:0;border-top:1px solid var(--line);margin:36px 0 18px">
+<p class="small">Related in this repo: <code>raspberry_pi/ap_sta_setup.py</code> (scripted
+Route B), <code>raspberry_pi/README_AP_STA.md</code>, and
+<code>documents for learning/RASPBERRY_PI_FIELD_DEPLOYMENT_GUIDE.html</code> (autostart,
+network readiness, client discovery).</p>
+
+</div>
+<script>
+document.querySelectorAll('.box > button').forEach(function (b) {
+  b.textContent = 'copy';
+  b.addEventListener('click', function () {
+    var t = b.parentNode.querySelector('code').innerText;
+    var done = function () {
+      b.textContent = 'copied'; b.classList.add('done');
+      setTimeout(function () { b.textContent = 'copy'; b.classList.remove('done'); }, 1400);
+    };
+    if (navigator.clipboard) { navigator.clipboard.writeText(t).then(done, done); return; }
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); done();
+  });
+});
+</script>
+</body>
+</html>

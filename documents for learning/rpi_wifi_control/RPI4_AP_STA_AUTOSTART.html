@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raspberry Pi 4 — make the concurrent AP + station come back on every boot</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow-x:hidden}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 90px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--dim);font-size:17px;margin:0 0 26px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:16px;border-top:1px solid var(--line);
+     letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px;letter-spacing:.01em}
+  h4{font-size:14px;margin:20px 0 6px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.06em}
+  h4.step{font-size:16.5px;color:var(--fg);text-transform:none;letter-spacing:-.005em;
+    font-weight:700;margin:32px 0 8px;padding-top:14px;border-top:1px dashed var(--line)}
+  h4.step code{font-size:.85em;text-transform:none;letter-spacing:0}
+  h2 .num{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:var(--code);color:var(--codefg);padding:1px 5px;border-radius:4px}
+  pre{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:14px 0}
+  pre code{background:none;padding:0;font-size:inherit}
+  .box{position:relative}
+  .box>button{position:absolute;top:7px;right:7px;font:600 11px/1 inherit;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--dim);background:var(--kbd);
+    border:1px solid var(--line);border-radius:5px;padding:5px 8px;cursor:pointer;opacity:.5;
+    transition:opacity .15s}
+  .box:hover>button{opacity:1}
+  .box>button:hover{color:var(--acc);border-color:var(--acc)}
+  .box>button.done{color:var(--ok);border-color:var(--ok)}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    font-weight:700;white-space:nowrap}
+  tbody tr:hover{background:var(--card)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin:16px 0}
+  .note,.warn,.ok,.bad{border-left:4px solid;border-radius:8px;padding:12px 15px;margin:16px 0}
+  .note{border-color:var(--acc);background:var(--acc-bg)}
+  .warn{border-color:var(--warn);background:var(--warn-bg)}
+  .ok{border-color:var(--ok);background:var(--ok-bg)}
+  .bad{border-color:var(--bad);background:var(--bad-bg)}
+  .y{color:var(--ok);font-weight:700}
+  .n{color:var(--bad);font-weight:700}
+  .m{color:var(--warn);font-weight:700}
+  ol,ul{margin:10px 0;padding-left:24px}
+  li{margin:6px 0}
+  kbd{background:var(--kbd);border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:inherit;font-weight:600}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;column-gap:28px}
+  @media (max-width:620px){.toc ol{columns:1}}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+  a{color:var(--acc)}
+  .small{font-size:13.5px;color:var(--dim)}
+  .ascii{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.45;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:16px 0}
+  .q{font-size:15px;color:var(--dim);font-style:italic;margin:0 0 14px;
+     padding-left:12px;border-left:3px solid var(--line)}
+  .fname{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.03em;color:var(--dim);margin:18px 0 -8px;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Make the concurrent AP + station come back on every boot</h1>
+<p class="lede">The Pi is serving both roles right now, by hand. This is how it survives a
+reboot, a power cut, and a cold start on a slow SD card — automatically, unattended, with a way
+to <i>prove</i> it worked rather than hoping.</p>
+
+<p class="q">"Now it is working fine — how do I do it automatically at startup?"</p>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#gap">What is missing right now</a></li>
+    <li><a href="#chain">The boot chain, in order</a></li>
+    <li><a href="#which">Which startup mechanism (and which fail)</a></li>
+    <li><a href="#steps">Step by step — make it automatic</a></li>
+    <li><a href="#harden">Hardening: udev, locks, watchdog</a></li>
+    <li><a href="#app">Start your own program after the AP is ready</a></li>
+    <li><a href="#prove">Prove it — test without rebooting, then soak</a></li>
+    <li><a href="#trouble">Boot-only failures</a></li>
+    <li><a href="#checklist">Final checklist</a></li>
+    <li><a href="#rollback">Rollback</a></li>
+  </ol>
+</div>
+
+<h2 id="gap"><span class="num">1</span>What is missing right now</h2>
+
+<p>A working concurrent AP is four separate things, and typing them by hand makes all four
+temporary. Only the last one persists on its own:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Piece</th><th>Survives a reboot by itself?</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>The <code>uap0</code> <b>netdev</b> (<code>iw dev … interface add</code>)</td>
+        <td class="n">No</td><td>Virtual interfaces are runtime-only. Nothing in the kernel or NetworkManager remembers it</td></tr>
+    <tr><td>Its <b>distinct MAC</b> (flipped locally-administered bit)</td>
+        <td class="n">No</td><td>Dies with the interface. A fresh <code>uap0</code> is born sharing <code>wlan0</code>'s MAC again</td></tr>
+    <tr><td>The <b>channel</b> matching the station</td>
+        <td class="m">Partly</td><td>Stored in the profile, but goes stale the moment the station joins a different router</td></tr>
+    <tr><td>The <b>AP profile</b> (NetworkManager) or <code>hostapd.conf</code></td>
+        <td class="y">Yes</td><td>Already on disk. But a profile with no interface to bind to just fails quietly</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>So the job is: recreate the interface at the right moment, give it the right MAC, let the
+existing profile bind to it, and keep the channel honest afterwards.</p>
+
+<h2 id="chain"><span class="num">2</span>The boot chain, in order</h2>
+
+<p>Order is the whole problem. Every boot failure in <a href="#trouble">§8</a> is this sequence
+going wrong at one specific point.</p>
+
+<div class="ascii">  power on
+     │
+     ├─ 1  kernel + brcmfmac firmware load          (slowest step on a cold SD card)
+     │        └─▶ wlan0 netdev appears in /sys/class/net
+     │
+     ├─ 2  YOUR UNIT RUNS HERE  ◀── this is the whole trick
+     │        iw dev wlan0 interface add uap0 type __ap
+     │        ip link set uap0 address <flipped MAC>
+     │
+     │        ⚠ must be BEFORE step 3. Once wlan0 is associated, brcmfmac
+     │          answers "Device or resource busy (-16)" and refuses.
+     │
+     ├─ 3  NetworkManager starts
+     │        ├─ autoconnects the STATION profile on wlan0   → internet
+     │        └─ autoconnects the AP profile on uap0         → SSID on the air
+     │                                                          + DHCP + NAT
+     ├─ 4  channel follower re-pins the AP to the station's channel   (t+90s, then /60s)
+     │
+     └─ 5  your own program starts, bound to 0.0.0.0 so it answers on both interfaces</div>
+
+<p>Confirm the two facts this relies on, on your own machine:</p>
+
+<div class="box"><button>copy</button><pre><code># NetworkManager orders itself after network-pre.target -- that is the hook we use
+systemctl cat NetworkManager.service | grep -E '^(After|Before|Wants)='
+
+# how long the radio takes to appear on YOUR sd card (step 1 above)
+journalctl -b -k | grep -iE 'brcmfmac|wlan0: ' | head -8</code></pre></div>
+
+<h2 id="which"><span class="num">3</span>Which startup mechanism (and which fail)</h2>
+
+<p class="q">"Can I not just put the command in a startup file?"</p>
+
+<p>You can put it in several. Most of them run <b>too late</b> — after NetworkManager has
+already associated <code>wlan0</code> — and then the one command that matters fails with
+<code>EBUSY</code> every single boot. This is the single most common reason a hand-built
+concurrent AP "works until I reboot".</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Mechanism</th><th>Runs</th><th>Creates <code>uap0</code>?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><b><code>systemd</code> unit, <code>Before=NetworkManager.service</code></b></td>
+        <td>before NM touches the radio</td><td class="y">Correct</td>
+        <td>The only mechanism that is reliably early enough. Journal-logged, ordered, testable</td></tr>
+    <tr><td><code>udev</code> rule → <code>SYSTEMD_WANTS</code></td>
+        <td>the instant <code>wlan0</code> appears</td><td class="y">Correct</td>
+        <td>Removes the device-unit race. Best used <i>with</i> the unit above, not instead — see <a href="#harden">§5</a></td></tr>
+    <tr><td><code>nmcli con modify … autoconnect yes</code></td>
+        <td>when NM sees the device</td><td class="m">N/A</td>
+        <td><b>Required</b>, but it only reactivates the <i>profile</i>. It cannot create the interface the profile needs</td></tr>
+    <tr><td>NetworkManager dispatcher script</td>
+        <td>on NM connectivity events</td><td class="n">Too late</td>
+        <td>Genuinely useful for "once the AP is up, do X". Cannot create the interface early enough</td></tr>
+    <tr><td><code>crontab @reboot</code></td>
+        <td>after <code>multi-user.target</code></td><td class="n">Too late</td>
+        <td>Well after NM associated. <code>EBUSY (-16)</code>, every boot</td></tr>
+    <tr><td><code>/etc/rc.local</code></td>
+        <td><code>rc-local.service</code>, after <code>network.target</code></td><td class="n">Too late</td>
+        <td>Same failure, plus deprecated and not enabled by default on Bookworm</td></tr>
+    <tr><td><code>~/.bashrc</code>, <code>~/.profile</code>, autostart</td>
+        <td>on interactive login only</td><td class="n">Never</td>
+        <td>A headless Pi that reboots at 3am logs nobody in</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note"><b>The answer to "a command in startup code", precisely:</b> one line,
+<code>ExecStart=/usr/local/sbin/uap0-up.sh</code>, in a unit carrying
+<code>Before=NetworkManager.service</code>. The <code>Before=</code> is not decoration — it is
+the load-bearing part. Everything else below is making that one line robust against a slow
+cold boot.</div>
+
+<h2 id="steps"><span class="num">4</span>Step by step — make it automatic</h2>
+
+<p>Ten steps. Nothing here disturbs the AP you have running; you are writing down what already
+works so the machine can redo it without you.</p>
+
+<h4 class="step" id="s1">Step 1 — Snapshot the working state first</h4>
+<p>You are about to change boot behaviour on a machine that currently works. Capture it, so
+"it worked yesterday" is evidence rather than a memory.</p>
+<div class="box"><button>copy</button><pre><code>mkdir -p ~/apsta-snapshot &amp;&amp; cd ~/apsta-snapshot
+iw dev                                     &gt; iw-dev.txt
+iw reg get                                 &gt; reg.txt
+ip -br addr                                &gt; ip-addr.txt
+ip -br link                                &gt; ip-link.txt
+nmcli con show                             &gt; nm-list.txt      2&gt;/dev/null
+nmcli -f all con show rpi-ap               &gt; nm-ap.txt        2&gt;/dev/null
+ls -l /etc/NetworkManager/conf.d/          &gt; nm-confd.txt     2&gt;/dev/null
+sudo cp /etc/hostapd/hostapd.conf .                           2&gt;/dev/null
+systemctl list-unit-files | grep -E 'uap0|hostapd|dnsmasq|ap-' &gt; units.txt
+tar czf ~/apsta-snapshot.tgz -C ~ apsta-snapshot
+echo "saved: ~/apsta-snapshot.tgz"</code></pre></div>
+
+<h4 class="step" id="s2">Step 2 — Identify which stack is serving the AP</h4>
+<p>The rest of the steps differ slightly. Find out which one you actually built.</p>
+<div class="box"><button>copy</button><pre><code>nmcli -g GENERAL.STATE connection show rpi-ap 2&gt;/dev/null \
+  &amp;&amp; echo "-&gt;&gt; Route A: NetworkManager owns the AP"
+systemctl is-active --quiet hostapd \
+  &amp;&amp; echo "-&gt;&gt; Route B: hostapd owns the AP"
+iw dev | grep -B4 'type AP'                      # confirm the AP iface name</code></pre></div>
+<p class="small">Route A ⇒ do every step. Route B ⇒ do all steps but replace step 7 with
+step 7b.</p>
+
+<h4 class="step" id="s3">Step 3 — Record the interface names once</h4>
+<p>One file, sourced by every script below, so a name change is a one-line edit rather than a
+hunt.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/default/rpi-ap-sta &gt;/dev/null &lt;&lt;'EOF'
+# Sourced by uap0-up.sh, ap-channel-follow.sh, ap-watchdog.sh, ap-boot-report.sh
+STA_IFACE=wlan0
+AP_IFACE=uap0
+AP_TYPE=__ap
+AP_CON=rpi-ap
+EOF
+cat /etc/default/rpi-ap-sta</code></pre></div>
+<p class="small">If your AP interface is called something else (a USB dongle,
+<code>wlan1</code>), change <code>AP_IFACE</code> here and nowhere else.</p>
+
+<h4 class="step" id="s4">Step 4 — The script that recreates the interface</h4>
+<p>Three jobs: wait for the radio, add the virtual netdev, give it a different MAC. Idempotent,
+so a rerun is harmless.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/uap0-up.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Recreate the virtual AP netdev on the same physical radio as the station.
+# Runs once per boot, BEFORE NetworkManager. Idempotent.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+rfkill unblock wlan || true
+
+# A cold boot on a slow SD card can take many seconds to load brcmfmac firmware,
+# and systemd .device units can lose that race. Wait for the radio explicitly
+# instead of trusting unit ordering alone. 60s is generous on purpose: a boot
+# that takes 20s once a year is cheaper than an AP that is missing until someone
+# drives out to the machine.
+for i in $(seq 1 60); do
+    [[ -d /sys/class/net/$STA_IFACE ]] &amp;&amp; break
+    sleep 1
+done
+if [[ ! -d /sys/class/net/$STA_IFACE ]]; then
+    echo "$STA_IFACE never appeared after 60s -- radio or firmware problem" &gt;&amp;2
+    exit 1
+fi
+[[ ${i:-0} -gt 1 ]] &amp;&amp; echo "waited ${i}s for $STA_IFACE"
+
+# The concurrency trick: a second virtual netdev on the same PHY.
+if ! iw dev | grep -qw "$AP_IFACE"; then
+    iw dev "$STA_IFACE" interface add "$AP_IFACE" type "$AP_TYPE"
+    echo "created $AP_IFACE on the $STA_IFACE radio"
+fi
+
+# Both netdevs inherit the one MAC of the one chip, and a shared MAC breaks ARP
+# and DHCP for anything that joins the AP. Flip the locally-administered bit.
+mac=$(cat "/sys/class/net/$STA_IFACE/address")
+want="$(printf '%02x' $(( 0x${mac:0:2} ^ 0x02 )))${mac:2}"
+if [[ "$(cat /sys/class/net/$AP_IFACE/address)" != "$want" ]]; then
+    ip link set dev "$AP_IFACE" down
+    ip link set dev "$AP_IFACE" address "$want"
+    echo "set $AP_IFACE MAC to $want (station is $mac)"
+fi
+ip link set dev "$AP_IFACE" up
+EOF
+sudo chmod 755 /usr/local/sbin/uap0-up.sh
+sudo bash -n /usr/local/sbin/uap0-up.sh      # syntax check only, changes nothing</code></pre></div>
+
+<h4 class="step" id="s5">Step 5 — The startup unit</h4>
+<p>This is the autostart. Every line in <code>[Unit]</code> is doing work — the annotations
+below the block explain which.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/systemd/system/uap0.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Create uap0 virtual AP interface on the wlan0 radio
+Documentation=file:///etc/default/rpi-ap-sta
+
+# Order after the radio exists...
+Wants=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan0.device
+
+# ...and before anything configures the network. NetworkManager itself declares
+# After=network-pre.target, so both of these put us ahead of it. Belt and braces:
+# if one hook is missing on your systemd version, the other still holds.
+Wants=network-pre.target
+Before=network-pre.target NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/uap0-up.sh
+ExecStop=-/usr/sbin/iw dev uap0 del
+
+# A slow cold boot must not be killed halfway through the wait loop.
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemd-analyze verify /etc/systemd/system/uap0.service   # silence = valid</code></pre></div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Directive</th><th>What breaks without it</th></tr></thead>
+  <tbody>
+    <tr><td><code>Before=NetworkManager.service</code></td><td><b>The critical one.</b> Run after NM and <code>iw … interface add</code> fails with <code>EBUSY (-16)</code> because <code>wlan0</code> is already associated. No AP, every boot</td></tr>
+    <tr><td><code>Before=network-pre.target</code></td><td>Nothing, if the line above holds. It is the idiomatic hook for "configure interfaces before networking", and covers the case where NM is socket-activated rather than started directly</td></tr>
+    <tr><td><code>After=sys-subsystem-net-devices-wlan0.device</code></td><td>The script can start before the radio exists. Mitigated by the wait loop in step 4 — keep both</td></tr>
+    <tr><td><code>Type=oneshot</code> + <code>RemainAfterExit=yes</code></td><td>Without <code>RemainAfterExit</code> systemd marks the unit inactive the moment the script exits, so <code>is-active</code> lies and other units cannot depend on it</td></tr>
+    <tr><td><code>ExecStop=-/usr/sbin/iw dev uap0 del</code></td><td>Without it, <code>systemctl restart uap0</code> leaves a stale interface. The leading <code>-</code> means "do not fail if it is already gone"</td></tr>
+    <tr><td><code>TimeoutStartSec=90</code></td><td>systemd's default 90s happens to match, but stating it means a longer wait loop later will not be silently killed</td></tr>
+    <tr><td><code>WantedBy=multi-user.target</code></td><td><code>systemctl enable</code> has nothing to link. The unit exists but never runs at boot — a classic "why is it not starting" with no error anywhere</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4 class="step" id="s6">Step 6 — Enable it, and test it right now</h4>
+<div class="box"><button>copy</button><pre><code>sudo systemctl daemon-reload
+sudo systemctl enable uap0.service
+systemctl is-enabled uap0.service            # must print: enabled
+
+# it is already satisfied (uap0 exists), so mark it active without re-creating anything
+sudo systemctl start uap0.service
+systemctl status uap0.service --no-pager
+
+# prove the ordering actually took effect
+systemctl list-dependencies --before uap0.service | grep -iE 'NetworkManager|network-pre'</code></pre></div>
+<p class="small">That last command should list <code>NetworkManager.service</code> — meaning
+systemd has recorded "<code>uap0</code> runs before NM". If it prints nothing, the
+<code>Before=</code> lines did not parse; re-check step 5 and <code>daemon-reload</code>.</p>
+
+<h4 class="step" id="s7">Step 7 — Make NetworkManager reconnect the profiles by itself</h4>
+<p>The interface will exist at boot. Now make sure NM actually binds to it without being asked.
+<b><code>autoconnect-retries 0</code> is the one people miss</b> — the default gives up after
+four attempts, which is exactly what happens when <code>uap0</code> appears a second later than
+NM expected.</p>
+<div class="box"><button>copy</button><pre><code># --- the AP profile ---
+sudo nmcli connection modify rpi-ap \
+     connection.autoconnect yes \
+     connection.autoconnect-priority 10 \
+     connection.autoconnect-retries 0 \
+     connection.interface-name uap0
+
+# --- the station profile (whatever wlan0 is using) ---
+STA=$(nmcli -g GENERAL.CONNECTION device show wlan0 | head -1)
+echo "station profile: $STA"
+sudo nmcli connection modify "$STA" \
+     connection.autoconnect yes \
+     connection.autoconnect-retries 0 \
+     802-11-wireless.powersave 2
+
+# confirm both
+nmcli -f NAME,DEVICE,AUTOCONNECT,AUTOCONNECT-PRIORITY connection show</code></pre></div>
+
+<h4 class="step" id="s7b">Step 7b — Route B only: enable hostapd and dnsmasq in the right order</h4>
+<p>Skip if NetworkManager owns your AP. These two must not start before
+<code>uap0</code> exists, or they fail once and stay dead.</p>
+<div class="box"><button>copy</button><pre><code>for u in hostapd dnsmasq; do
+  sudo mkdir -p /etc/systemd/system/$u.service.d
+  sudo tee /etc/systemd/system/$u.service.d/override.conf &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+After=uap0.service
+Requires=uap0.service
+
+[Service]
+Restart=on-failure
+RestartSec=5
+EOF
+done
+sudo systemctl unmask hostapd          # Raspberry Pi OS ships it masked
+sudo systemctl daemon-reload
+sudo systemctl enable hostapd dnsmasq
+systemctl is-enabled uap0.service hostapd dnsmasq</code></pre></div>
+<p class="small">Route B also needs <code>uap0-up.sh</code> to assign the address itself, since
+there is no NM profile to do it — append
+<code>ip addr flush dev "$AP_IFACE"; ip addr add 192.168.50.1/24 dev "$AP_IFACE"</code> to the
+end of the script from step 4.</p>
+
+<h4 class="step" id="s8">Step 8 — Keep the channel honest after boot</h4>
+<p>Boot is not the only moment things drift. The station roams; the AP must follow, or clients
+silently stop associating. If you already installed this from the setup guide, skip to step 9.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/ap-channel-follow.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# One radio cannot hold two channels (iw list -&gt; '#channels &lt;= 1'). When the
+# station joins a router on a different channel the AP goes stale and clients
+# silently stop associating. Re-pin and reactivate.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+# Serialise against ap-watchdog.sh so the two never call 'nmcli con up' at once.
+mkdir -p /run/lock 2&gt;/dev/null || true
+exec 9&gt;/run/lock/ap-health.lock || exit 0
+flock -n 9 || exit 0
+
+cur=$(iw dev "$STA_IFACE" info 2&gt;/dev/null | awk '$1=="channel"{print $2}')
+[ -z "${cur:-}" ] &amp;&amp; exit 0
+
+if [ "$cur" -gt 14 ]; then
+    logger -t ap-follow "$STA_IFACE is on 5 GHz ch $cur; the 2.4 GHz AP cannot follow. Pin the upstream to 2.4 GHz or add a USB dongle."
+    exit 0
+fi
+
+want=$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")
+[ "$cur" = "$want" ] &amp;&amp; exit 0
+
+logger -t ap-follow "$STA_IFACE moved to ch $cur (AP had ${want:-unset}) -- resyncing"
+nmcli connection modify "$AP_CON" 802-11-wireless.band bg 802-11-wireless.channel "$cur"
+nmcli connection up "$AP_CON"
+EOF
+sudo chmod 755 /usr/local/sbin/ap-channel-follow.sh
+
+sudo tee /etc/systemd/system/ap-channel-follow.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Re-sync the AP channel to the station channel
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-channel-follow.sh
+EOF
+
+sudo tee /etc/systemd/system/ap-channel-follow.timer &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Check every minute whether the station changed channel
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ap-channel-follow.timer
+systemctl list-timers ap-channel-follow.timer --no-pager</code></pre></div>
+
+<h4 class="step" id="s9">Step 9 — A per-boot state line in the journal</h4>
+<p>Cheap and worth more than it looks: one log line per boot, so
+<code>journalctl -t ap-boot</code> becomes a reliability history you can read weeks later
+instead of arguing from memory.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/ap-boot-report.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Log one line describing the AP+STA state, ~60s into each boot.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+ap=$(ip -4 -br addr show "$AP_IFACE" 2&gt;/dev/null | awk '{print $3}')
+st=$(nmcli -g GENERAL.STATE connection show "$AP_CON" 2&gt;/dev/null)
+sc=$(iw dev "$STA_IFACE" info 2&gt;/dev/null | awk '$1=="channel"{print $2}')
+ac=$(iw dev "$AP_IFACE"  info 2&gt;/dev/null | awk '$1=="channel"{print $2}')
+n=$(iw dev "$AP_IFACE" station dump 2&gt;/dev/null | grep -c '^Station')
+logger -t ap-boot "ap_ip=${ap:-NONE} profile=${st:-NONE} sta_ch=${sc:-none} ap_ch=${ac:-none} clients=${n:-0}"
+EOF
+sudo chmod 755 /usr/local/sbin/ap-boot-report.sh
+
+sudo tee /etc/systemd/system/ap-boot-report.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Log AP+STA state once per boot
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-boot-report.sh
+EOF
+
+sudo tee /etc/systemd/system/ap-boot-report.timer &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Run the AP boot report 60s after boot
+
+[Timer]
+OnBootSec=60
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ap-boot-report.timer
+sudo systemctl start ap-boot-report.service       # write one line now
+journalctl -t ap-boot -o short-iso --no-pager</code></pre></div>
+<p class="small">A healthy line looks like
+<code>ap_ip=192.168.50.1/24 profile=activated sta_ch=6 ap_ch=6 clients=2</code>. Any line with
+<code>ap_ip=NONE</code> or mismatched channels is a boot that failed.</p>
+
+<h4 class="step" id="s10">Step 10 — Persist the radio's country code</h4>
+<p>Easy to forget because it only bites on a fresh boot: with no regulatory domain the AP either
+refuses to start or beacons at minimum power. Set it in the OS, not just at runtime.</p>
+<div class="box"><button>copy</button><pre><code>sudo raspi-config nonint do_wifi_country US       # your code: GB DE OM AE IR ...
+iw reg get | head -3                             # must NOT say 'country 00: DFS-UNSET'
+grep -i country /etc/default/crda 2&gt;/dev/null; ls -l /var/lib/systemd/rfkill/ 2&gt;/dev/null</code></pre></div>
+
+<h2 id="harden"><span class="num">5</span>Hardening: udev, locks, watchdog</h2>
+
+<h3>Trigger the unit from udev instead of racing a device unit</h3>
+<p>The wait loop in step 4 handles the race by brute force. This removes it: udev pulls the unit
+in at the exact moment <code>wlan0</code> appears. Use it <i>alongside</i> the
+<code>Before=</code> ordering, not instead of it.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/udev/rules.d/70-uap0.rules &gt;/dev/null &lt;&lt;'EOF'
+# When the built-in radio's netdev appears, start the unit that adds uap0.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="wlan0", TAG+="systemd", \
+  ENV{SYSTEMD_WANTS}="uap0.service"
+EOF
+sudo udevadm control --reload-rules
+udevadm test /sys/class/net/wlan0 2&gt;&amp;1 | grep -i systemd_wants   # confirm it matches</code></pre></div>
+<p class="small">Do not put the <code>iw</code> command directly in <code>RUN+=</code>. udev
+kills long-running <code>RUN</code> programs and the whole event pipeline stalls behind them —
+hand off to a unit, as above.</p>
+
+<h3>A watchdog for runtime death, not just boot</h3>
+<p>Boot is solved above. This covers the AP dying hours later — a driver hiccup, a
+<code>NetworkManager</code> restart during <code>apt upgrade</code>, an interface that vanished.
+It deliberately does <b>not</b> touch the channel; that is the follower's job, and the shared
+<code>flock</code> keeps the two from colliding.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/ap-watchdog.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Revive the AP if it disappears at runtime. Does NOT manage the channel --
+# ap-channel-follow.sh owns that. Both take the same lock so they never race.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+
+mkdir -p /run/lock 2&gt;/dev/null || true
+exec 9&gt;/run/lock/ap-health.lock || exit 0
+flock -n 9 || exit 0
+
+# 1. the netdev itself vanished
+if ! ip link show "$AP_IFACE" &amp;&gt;/dev/null; then
+    logger -t ap-watchdog "$AP_IFACE is gone -- recreating via uap0.service"
+    systemctl restart uap0.service || { logger -t ap-watchdog "recreate FAILED"; exit 1; }
+    sleep 2
+fi
+
+# 2. netdev is there but the profile is not activated
+state=$(nmcli -g GENERAL.STATE connection show "$AP_CON" 2&gt;/dev/null)
+if [ "${state:-}" != activated ]; then
+    logger -t ap-watchdog "profile $AP_CON is '${state:-missing}' -- reactivating"
+    nmcli connection up "$AP_CON" || logger -t ap-watchdog "reactivate FAILED"
+    exit 0
+fi
+
+# 3. activated but with no address (rare, and invisible without this check)
+if ! ip -4 addr show "$AP_IFACE" | grep -q 'inet '; then
+    logger -t ap-watchdog "$AP_IFACE has no IPv4 -- bouncing $AP_CON"
+    nmcli connection down "$AP_CON"; nmcli connection up "$AP_CON"
+fi
+EOF
+sudo chmod 755 /usr/local/sbin/ap-watchdog.sh
+
+sudo tee /etc/systemd/system/ap-watchdog.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Revive the concurrent AP if it dies at runtime
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-watchdog.sh
+EOF
+
+sudo tee /etc/systemd/system/ap-watchdog.timer &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Check the AP every 2 minutes
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=120
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ap-watchdog.timer
+sudo /usr/local/sbin/ap-watchdog.sh &amp;&amp; journalctl -t ap-watchdog -n 5 --no-pager</code></pre></div>
+<div class="note"><b>Add the same lock to the follower</b> if you installed it from the setup
+guide before reading this — the two lines are already in step 8's version. Without the lock,
+both timers can call <code>nmcli connection up</code> in the same second and one fails
+harmlessly but noisily.</div>
+
+<h2 id="app"><span class="num">6</span>Start your own program after the AP is ready</h2>
+
+<p>The AP coming back is only half of "it works after a reboot" — your server has to come back
+too, and not before the network it needs.</p>
+
+<div class="ok"><b>First, the shortcut that removes the problem:</b> bind to
+<code>0.0.0.0</code>, not to <code>192.168.50.1</code>. A socket on <code>0.0.0.0</code> binds
+successfully whether or not <code>uap0</code> has an address yet, and then answers on the AP
+<i>and</i> the station link. Flask: <code>app.run(host="0.0.0.0", port=8080)</code>. Do this and
+your service needs no waiting at all — just <code>After=NetworkManager.service</code>.</div>
+
+<span class="fname">the simple case — bound to 0.0.0.0</span>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/systemd/system/ap-server.service &gt;/dev/null &lt;&lt;'EOF'
+[Unit]
+Description=Telemetry server for the ESP32s on the concurrent AP
+After=NetworkManager.service uap0.service
+Wants=uap0.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ESP_Advanced_Project/raspberry_pi
+ExecStart=/usr/bin/python3 monitoring_control.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now ap-server.service
+journalctl -u ap-server -f</code></pre></div>
+
+<h3>If you genuinely must bind the specific address</h3>
+<p>Some libraries insist. Then wait for the address — but <b>degrade, do not deadlock</b>: the
+helper exits 0 on timeout so <code>Restart=always</code> retries the service instead of the
+unit wedging forever.</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /usr/local/sbin/wait-for-ap.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/usr/bin/env bash
+# Block until the AP interface has an IPv4 address. Exits 0 either way: a service
+# that refuses to start is worse than one that starts and retries.
+set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /etc/default/rpi-ap-sta
+for i in $(seq 1 60); do
+    if ip -4 addr show "$AP_IFACE" 2&gt;/dev/null | grep -q 'inet '; then
+        [ "$i" -gt 1 ] &amp;&amp; echo "waited ${i}s for $AP_IFACE"
+        exit 0
+    fi
+    sleep 1
+done
+echo "$AP_IFACE still has no IPv4 after 60s -- starting anyway" &gt;&amp;2
+exit 0
+EOF
+sudo chmod 755 /usr/local/sbin/wait-for-ap.sh
+
+# then add to your service's [Service] section:
+#   ExecStartPre=/usr/local/sbin/wait-for-ap.sh</code></pre></div>
+
+<div class="warn"><b>Do not use <code>After=network-online.target</code> for this.</b> It waits
+for the <i>station</i> to reach connectivity, which on a field machine with no upstream router
+may be never. Your AP-side server does not need the internet to serve two ESP32s — coupling it
+to <code>network-online.target</code> turns a working local AP into a service that never
+starts.</div>
+
+<h2 id="prove"><span class="num">7</span>Prove it — test without rebooting, then soak</h2>
+
+<h3>Test 1 — does NetworkManager reconnect the AP on its own?</h3>
+<p>This is the real test of step 7. Take the AP down and restart NM; <b>do not</b> bring it back
+up by hand. If <code>autoconnect</code> is right, it returns without you.</p>
+<div class="box"><button>copy</button><pre><code>sudo nmcli connection down rpi-ap
+sudo systemctl restart NetworkManager
+sleep 15
+nmcli -g GENERAL.STATE connection show rpi-ap     # must print: activated
+ip -br addr show uap0</code></pre></div>
+
+<h3>Test 2 — does the interface get recreated from nothing?</h3>
+<p>Destroys <code>uap0</code> completely, then rebuilds it exactly the way boot will.</p>
+<div class="box"><button>copy</button><pre><code>sudo systemctl stop uap0.service          # ExecStop deletes the interface
+iw dev | grep -c uap0                     # expect 0
+
+sudo systemctl start uap0.service         # what boot does
+ip -br link show uap0 wlan0               # exists again, MACs still differ
+sudo nmcli connection up rpi-ap
+journalctl -u uap0 -n 15 --no-pager       # read what the script reported</code></pre></div>
+
+<h3>Test 3 — the actual reboot</h3>
+<div class="box"><button>copy</button><pre><code>sudo reboot
+
+# ---- after it comes back, touch nothing first, then: ----
+journalctl -t ap-boot -o short-iso --no-pager | tail -3   # ap_ip=... profile=activated
+systemctl is-active uap0.service
+nmcli -g GENERAL.STATE connection show rpi-ap
+iw dev wlan0 info | grep channel; iw dev uap0 info | grep channel
+
+# did anything in the chain complain?
+journalctl -b -u uap0 -u NetworkManager -t ap-follow -t ap-watchdog --no-pager \
+  | grep -iE 'fail|error|busy|-16|refus' || echo "clean boot"
+
+# how long the chain took, and what blocked it
+systemd-analyze critical-chain NetworkManager.service
+systemd-analyze blame | head -12</code></pre></div>
+
+<h3>Test 4 — the soak test that actually matters</h3>
+<p>A warm reboot re-uses a warm cache and a spun-up SD card. The failures that strand a machine
+in the field are <b>cold</b> boots. Do at least three, with the power physically removed for
+30 seconds each, and read the history afterwards:</p>
+<div class="box"><button>copy</button><pre><code># after each cold power cycle, this history should gain one healthy line
+journalctl -t ap-boot -o short-iso --no-pager
+
+# every line must show a real address and 'activated':
+#   2026-08-04T09:12:03  ap-boot  ap_ip=192.168.50.1/24 profile=activated sta_ch=6 ap_ch=6 clients=2
+# any 'ap_ip=NONE' is a failed boot -- read that boot's log:
+journalctl -b -1 -u uap0 --no-pager</code></pre></div>
+<p class="small"><code>journalctl</code> only keeps history across boots if the journal is
+persistent. Check with <code>ls /var/log/journal</code>; if it is missing, enable it:
+<code>sudo mkdir -p /var/log/journal &amp;&amp; sudo systemd-tmpfiles --create --prefix /var/log/journal</code>.
+On an SD card this costs a little write wear and is worth it.</p>
+
+<h2 id="trouble"><span class="num">8</span>Boot-only failures</h2>
+
+<p>These all share a signature: <b>it works when you type it, and fails after a reboot.</b>
+That signature always means ordering or timing.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>journalctl -u uap0 -b</code> shows <code>Device or resource busy (-16)</code></td>
+      <td>The unit ran <b>after</b> NetworkManager associated <code>wlan0</code></td>
+      <td>The <code>Before=</code> lines are missing or did not parse. <code>systemctl list-dependencies --before uap0.service</code> must list <code>NetworkManager.service</code>. Also check you are not <i>also</i> creating it from cron or <code>rc.local</code></td>
+    </tr>
+    <tr>
+      <td><code>uap0</code> exists after boot, but no SSID</td>
+      <td>NM gave up autoconnecting before the interface appeared</td>
+      <td><code>nmcli -g connection.autoconnect-retries con show rpi-ap</code> must be <code>0</code> (infinite). The default 4 is not enough on a slow boot</td>
+    </tr>
+    <tr>
+      <td><code>systemctl status uap0</code> → <code>inactive (dead)</code>, no error at all</td>
+      <td>The unit was never enabled, or <code>[Install]</code> is missing</td>
+      <td><code>systemctl is-enabled uap0.service</code>; if it says <code>static</code>, the <code>WantedBy=</code> line is missing from step 5</td>
+    </tr>
+    <tr>
+      <td>Warm reboot fine, <b>cold</b> boot fails</td>
+      <td>brcmfmac firmware load is slower from cold; the radio was not there yet</td>
+      <td>Raise the wait loop in step 4 from 60 to 120 and <code>TimeoutStartSec</code> to 180. Confirm the real delay: <code>journalctl -b -k | grep brcmfmac</code></td>
+    </tr>
+    <tr>
+      <td>AP up, but clients associate and immediately drop</td>
+      <td>Channel drift — the station joined a different router than last boot</td>
+      <td><code>systemctl list-timers ap-channel-follow.timer</code>; run it by hand and read <code>journalctl -t ap-follow</code></td>
+    </tr>
+    <tr>
+      <td>AP up, clients get no IP after a reboot only</td>
+      <td>Something else grabbed <code>:53</code> before NM's internal dnsmasq</td>
+      <td><code>systemctl is-enabled dnsmasq</code> should be <code>disabled</code> on Route A. Keep the <code>dnsmasq-base</code> package, disable the <code>dnsmasq</code> service</td>
+    </tr>
+    <tr>
+      <td>Devices on the AP cannot reach each other after a reboot</td>
+      <td><code>uap0</code> came back sharing <code>wlan0</code>'s MAC</td>
+      <td><code>ip -br link show wlan0 uap0</code> — addresses must differ. If they match, the MAC-flip block in step 4 is missing or exited early</td>
+    </tr>
+    <tr>
+      <td>Everything up, but your server is not listening</td>
+      <td>It started before <code>uap0</code> had an address and bound a specific IP</td>
+      <td>Bind <code>0.0.0.0</code> (<a href="#app">§6</a>). If you cannot, add <code>ExecStartPre=/usr/local/sbin/wait-for-ap.sh</code></td>
+    </tr>
+    <tr>
+      <td>Your service never starts at all</td>
+      <td><code>After=network-online.target</code> and there is no upstream router</td>
+      <td>Remove it. Depend on <code>uap0.service</code> and <code>NetworkManager.service</code> instead</td>
+    </tr>
+    <tr>
+      <td>AP works for hours then dies, boot is fine</td>
+      <td>Runtime failure, not a startup problem</td>
+      <td>That is what the watchdog in <a href="#harden">§5</a> is for. Check <code>journalctl -t ap-watchdog</code></td>
+    </tr>
+    <tr>
+      <td>Nothing wireless works after boot; <code>rfkill</code> shows a soft block</td>
+      <td>Persisted rfkill state, usually alongside an unset country</td>
+      <td>Set the country (step 10). <code>uap0-up.sh</code> already calls <code>rfkill unblock wlan</code> on every boot</td>
+    </tr>
+    <tr>
+      <td>Two units fighting; log shows repeated up/down</td>
+      <td>Follower and watchdog both reactivating</td>
+      <td>Both must take <code>/run/lock/ap-health.lock</code>. Add the two <code>flock</code> lines to whichever script lacks them</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="checklist"><span class="num">9</span>Final checklist</h2>
+
+<p>Everything that must be true for an unattended boot. Run the whole block; anything that is
+not <code>enabled</code> / <code>yes</code> / <code>0</code> is a machine that will not come
+back on its own.</p>
+
+<div class="box"><button>copy</button><pre><code>echo "--- units that must be enabled ---"
+systemctl is-enabled uap0.service ap-channel-follow.timer ap-watchdog.timer \
+                     ap-boot-report.timer 2&gt;&amp;1
+
+echo "--- Route B only (skip if NetworkManager owns the AP) ---"
+systemctl is-enabled hostapd dnsmasq 2&gt;&amp;1
+
+echo "--- NM profiles must autoconnect, and retry forever ---"
+nmcli -f NAME,DEVICE,AUTOCONNECT connection show
+for p in rpi-ap; do
+  echo "$p retries: $(nmcli -g connection.autoconnect-retries con show $p)"   # want 0
+done
+
+echo "--- regulatory domain must be set ---"
+iw reg get | head -2
+
+echo "--- your own service ---"
+systemctl is-enabled ap-server.service 2&gt;&amp;1
+
+echo "--- ordering recorded by systemd ---"
+systemctl list-dependencies --before uap0.service | grep -i networkmanager
+
+echo "--- last boot's verdict ---"
+journalctl -t ap-boot -o short-iso --no-pager | tail -1</code></pre></div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Must be true</th><th>Why it matters at boot</th></tr></thead>
+  <tbody>
+    <tr><td><code>uap0.service</code> → <code>enabled</code></td><td>No interface, no AP. Everything else is downstream of this</td></tr>
+    <tr><td>It runs <b>before</b> NetworkManager</td><td>Otherwise <code>EBUSY (-16)</code> every boot</td></tr>
+    <tr><td><code>rpi-ap</code> autoconnect <code>yes</code>, retries <code>0</code></td><td>NM must bind the profile unasked, and keep trying if the interface is late</td></tr>
+    <tr><td>Station profile autoconnect <code>yes</code></td><td>No station link ⇒ no internet and no NAT upstream for AP clients</td></tr>
+    <tr><td><code>ap-channel-follow.timer</code> → <code>enabled</code></td><td>The AP must track the station's channel or clients silently stop joining</td></tr>
+    <tr><td><code>ap-watchdog.timer</code> → <code>enabled</code></td><td>Covers runtime death, which boot ordering cannot</td></tr>
+    <tr><td>Country code set in the OS</td><td>An unset domain kills the AP on a fresh boot even when runtime worked</td></tr>
+    <tr><td>Your server binds <code>0.0.0.0</code></td><td>Removes all start-order coupling to the AP's address</td></tr>
+    <tr><td>Journal is persistent</td><td>Without it you cannot read why the <i>previous</i> boot failed</td></tr>
+    <tr><td>At least 3 cold power cycles passed</td><td>Warm reboots do not exercise the timing that strands field machines</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="rollback"><span class="num">10</span>Rollback</h2>
+
+<p>Removes the autostart only. The AP keeps running until you reboot, and the profile,
+<code>hostapd.conf</code> and your station link are untouched.</p>
+
+<div class="box"><button>copy</button><pre><code>sudo systemctl disable --now ap-watchdog.timer ap-channel-follow.timer \
+                             ap-boot-report.timer ap-server.service 2&gt;/dev/null
+sudo systemctl disable uap0.service            # leave it RUNNING, just not at boot
+sudo rm -f /etc/udev/rules.d/70-uap0.rules
+sudo udevadm control --reload-rules
+sudo systemctl daemon-reload
+
+# confirm: the AP is still up, but nothing will bring it back next boot
+iw dev | grep -A3 uap0
+systemctl is-enabled uap0.service              # disabled</code></pre></div>
+
+<p>To remove it completely as well, delete the units and scripts:</p>
+
+<div class="box"><button>copy</button><pre><code>sudo rm -f /etc/systemd/system/{uap0.service,ap-channel-follow.service,ap-channel-follow.timer} \
+           /etc/systemd/system/{ap-watchdog.service,ap-watchdog.timer} \
+           /etc/systemd/system/{ap-boot-report.service,ap-boot-report.timer} \
+           /etc/systemd/system/ap-server.service \
+           /usr/local/sbin/{uap0-up.sh,ap-channel-follow.sh,ap-watchdog.sh} \
+           /usr/local/sbin/{ap-boot-report.sh,wait-for-ap.sh} \
+           /etc/default/rpi-ap-sta
+sudo systemctl daemon-reload
+sudo iw dev uap0 del 2&gt;/dev/null
+iw dev                                          # only wlan0 remains</code></pre></div>
+
+<hr style="border:0;border-top:1px solid var(--line);margin:36px 0 18px">
+<p class="small">Companions in this folder:
+<code>RPI4_WIFI_STATION_AND_AP.html</code> (building the concurrent AP in the first place) and
+<code>apsta-doctor.sh</code> (read-only diagnosis when a client cannot join).</p>
+
+</div>
+<script>
+document.querySelectorAll('.box > button').forEach(function (b) {
+  b.textContent = 'copy';
+  b.addEventListener('click', function () {
+    var t = b.parentNode.querySelector('code').innerText;
+    var done = function () {
+      b.textContent = 'copied'; b.classList.add('done');
+      setTimeout(function () { b.textContent = 'copy'; b.classList.remove('done'); }, 1400);
+    };
+    if (navigator.clipboard) { navigator.clipboard.writeText(t).then(done, done); return; }
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); done();
+  });
+});
+</script>
+</body>
+</html>

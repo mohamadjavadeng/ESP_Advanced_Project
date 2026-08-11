@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AP Automation — how the Pi's concurrent AP was fixed and the camera made findable</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#1c1a17; --muted:#6b645c; --rule:#e2ddd6;
+    --card:#ffffff; --code-bg:#f4f1ec; --accent:#9a5b2c; --accent-soft:#f0e4d8;
+    --ok:#2f6b3f; --ok-bg:#e6f0e6; --warn:#8a6100; --warn-bg:#fbf0d8;
+    --bad:#94322b; --bad-bg:#f8e3e0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#17161a; --fg:#e9e5df; --muted:#9d968d; --rule:#33302f;
+      --card:#1f1e22; --code-bg:#222024; --accent:#d99a63; --accent-soft:#33261c;
+      --ok:#8ec89a; --ok-bg:#1e2a20; --warn:#e0b45f; --warn-bg:#2c2416;
+      --bad:#e8938a; --bad-bg:#2e1d1b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:48px 24px 96px}
+  header{border-bottom:2px solid var(--fg); padding-bottom:22px; margin-bottom:36px}
+  .kicker{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:700}
+  h1{font-size:34px; line-height:1.2; margin:10px 0 8px; letter-spacing:-.02em}
+  .sub{color:var(--muted); font-size:16px; margin:0}
+  .meta{margin-top:16px; font-size:13px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  h2{font-size:23px; margin:52px 0 14px; letter-spacing:-.01em; padding-top:14px; border-top:1px solid var(--rule)}
+  h3{font-size:17px; margin:30px 0 8px}
+  h4{font-size:15px; margin:22px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:12px}
+  p{margin:12px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
+       background:var(--code-bg); padding:.12em .38em; border-radius:4px}
+  pre{background:var(--code-bg); border:1px solid var(--rule); border-radius:8px;
+      padding:14px 16px; overflow-x:auto; font-size:13.5px; line-height:1.55; margin:14px 0}
+  pre code{background:none; padding:0; font-size:inherit}
+  .c{color:var(--muted)}
+  .out{color:var(--accent)}
+  table{border-collapse:collapse; width:100%; margin:16px 0; font-size:14.5px; display:block; overflow-x:auto}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--rule); vertical-align:top}
+  th{font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); white-space:nowrap}
+  td code{white-space:nowrap}
+  .box{border-radius:8px; padding:14px 18px; margin:20px 0; border:1px solid var(--rule); background:var(--card)}
+  .box p:first-child{margin-top:0} .box p:last-child{margin-bottom:0}
+  .box.key{border-left:4px solid var(--accent); background:var(--accent-soft)}
+  .box.ok{border-left:4px solid var(--ok); background:var(--ok-bg)}
+  .box.warn{border-left:4px solid var(--warn); background:var(--warn-bg)}
+  .box.bad{border-left:4px solid var(--bad); background:var(--bad-bg)}
+  .box .lbl{font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; display:block; margin-bottom:6px}
+  .key .lbl{color:var(--accent)} .ok .lbl{color:var(--ok)} .warn .lbl{color:var(--warn)} .bad .lbl{color:var(--bad)}
+  ol,ul{padding-left:22px} li{margin:7px 0}
+  figure{margin:26px 0}
+  figcaption{font-size:13px; color:var(--muted); margin-top:8px; text-align:center}
+  svg{max-width:100%; height:auto; display:block; margin:0 auto}
+  .toc{background:var(--card); border:1px solid var(--rule); border-radius:8px; padding:18px 22px; margin:28px 0}
+  .toc ol{margin:6px 0 0; padding-left:20px} .toc li{margin:4px 0}
+  .toc a{color:var(--fg); text-decoration:none; border-bottom:1px solid var(--rule)}
+  .toc a:hover{border-color:var(--accent); color:var(--accent)}
+  footer{margin-top:64px; padding-top:20px; border-top:1px solid var(--rule); font-size:13px; color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Raspberry Pi 4 · Field Notes</div>
+  <h1>AP Automation</h1>
+  <p class="sub">How the Pi's concurrent AP was diagnosed and repaired, and how the camera's IP became something a program can just read. Written as a walkthrough of the reasoning, not a copy-paste recipe.</p>
+  <div class="meta">Target: Raspberrypi · Debian 13 (trixie) · kernel 6.18.34+rpt-rpi-v8 · 2026-08-08</div>
+</header>
+
+<div class="box warn">
+  <span class="lbl">Contains credentials</span>
+  <p>This file records the Pi login and the AP passphrase so the commands are runnable as written. Keep it out of any public repository, or blank those two values before sharing it.</p>
+</div>
+
+<nav class="toc">
+  <strong>What this covers</strong>
+  <ol>
+    <li><a href="#goal">The goal, and what already existed</a></li>
+    <li><a href="#safety">Working safely on a box with no wired fallback</a></li>
+    <li><a href="#recon">Reconnaissance: eight commands that decide everything</a></li>
+    <li><a href="#model">The mental model: one radio, one channel</a></li>
+    <li><a href="#diagnosis">The diagnosis, and the evidence for it</a></li>
+    <li><a href="#fix">The fix: pin the station to 2.4 GHz</a></li>
+    <li><a href="#camera">The camera-discovery service</a></li>
+    <li><a href="#persist">Making it survive a reboot, and proving it did</a></li>
+    <li><a href="#reference">Reference: files, commands, troubleshooting</a></li>
+    <li><a href="#adapt">Adapting it</a></li>
+  </ol>
+</nav>
+
+<h2 id="goal">1. The goal, and what already existed</h2>
+
+<p>The request was: make the Pi come up on its own as <em>both</em> a Wi-Fi client and an access point, have it find the camera among its AP clients by name, and store that camera's IP somewhere reusable.</p>
+
+<p>The first useful discovery was that most of that was <strong>already built</strong>. The repo's <code>rpi_wifi_control/</code> folder had the tooling, and the Pi already had the units installed:</p>
+
+<table>
+<tr><th>Piece</th><th>State before</th></tr>
+<tr><td><code>uap0.service</code> — creates the virtual AP netdev</td><td>enabled, active</td></tr>
+<tr><td><code>ap-channel-follow.timer</code> — keeps AP channel in sync</td><td>enabled, active</td></tr>
+<tr><td>NM profile <code>rpi-ap</code> (SSID <code>RPi_AP</code>, 192.168.50.1/24, <code>ipv4.method=shared</code>)</td><td>activated, autoconnect</td></tr>
+<tr><td>Station profile <code>A 3</code> on <code>wlan0</code></td><td>connected, autoconnect</td></tr>
+<tr><td>Camera discovery</td><td><strong>missing</strong></td></tr>
+<tr><td>AP actually usable by clients</td><td><strong>broken — 0 stations associated</strong></td></tr>
+</table>
+
+<p>So the job turned out to be two jobs: find out why a fully-configured AP had no clients, and then build the discovery layer on top of it.</p>
+
+<div class="box key">
+  <span class="lbl">Lesson</span>
+  <p>Before building anything, inventory what is already there. Half the work here was already done; charging ahead would have produced a duplicate AP stack fighting the existing one — the exact failure mode <code>apsta-doctor.sh</code> check 4 warns about.</p>
+</div>
+
+<h2 id="safety">2. Working safely on a box with no wired fallback</h2>
+
+<p>The very first command run after the connection test was this one, and it shaped everything after:</p>
+
+<pre><code>ip -br addr | grep -v ' lo '
+<span class="out">eth0    DOWN
+wlan0   UP    192.168.0.110/24
+uap0    UP    192.168.50.1/24</span></code></pre>
+
+<p><code>eth0</code> is <strong>DOWN</strong>. SSH arrives over <code>wlan0</code> — the same radio that any Wi-Fi change is about to reconfigure. There is no second way in. A botched command means walking to the Pi with a keyboard.</p>
+
+<p>Two habits make that survivable.</p>
+
+<h3>Habit 1: run network changes detached</h3>
+
+<p>If a command is executed inline over SSH and the SSH session dies halfway through — which is exactly what a Wi-Fi reassociation does — the command dies with it, potentially leaving the interface half-configured. <code>systemd-run</code> hands the work to PID 1, which does not care that your session vanished:</p>
+
+<pre><code>sudo systemd-run --unit=wifi-apply --on-active=2 --collect /bin/bash -c \
+  "nmcli con mod 'A 3' 802-11-wireless.band bg; \
+   nmcli con up 'A 3'; \
+   sleep 10; \
+   /usr/local/sbin/ap-channel-follow.sh; \
+   logger -t wifi-apply 'band lock applied'"</code></pre>
+
+<p>The <code>--on-active=2</code> delay lets the SSH command return cleanly <em>before</em> the network moves under it.</p>
+
+<h3>Habit 2: arm a rollback before you break anything</h3>
+
+<p>Armed <em>first</em>, so it is already ticking when the risky change lands. If the change works, you cancel it. If the Pi drops off the network, nobody cancels it, and in 180 seconds it undoes itself:</p>
+
+<pre><code>sudo systemd-run --unit=wifi-rollback --on-active=180 --collect /bin/bash -c \
+  "nmcli con mod 'A 3' 802-11-wireless.band ''; \
+   nmcli con up 'A 3'; \
+   logger -t wifi-rollback 'band lock REVERTED (nobody cancelled me)'"
+
+<span class="c"># ... apply the change, verify the Pi is healthy, and only then:</span>
+sudo systemctl stop wifi-rollback.timer</code></pre>
+
+<div class="box key">
+  <span class="lbl">The general rule</span>
+  <p>Any remote change that can sever your own connection needs a dead-man's switch. The cost is two extra commands; the alternative is a site visit. This is standard practice for remote router work and applies verbatim to a Pi whose only link is the radio you are editing.</p>
+</div>
+
+<h2 id="recon">3. Reconnaissance: eight commands that decide everything</h2>
+
+<p>No changes were made until these had all been read. Each answers a question that changes what you do next.</p>
+
+<table>
+<tr><th>Command</th><th>Question it answers</th></tr>
+<tr><td><code>ip -br addr</code></td><td>Which interface carries my session? Do I have a fallback?</td></tr>
+<tr><td><code>nmcli -t -f NAME,TYPE,DEVICE,AUTOCONNECT con show</code></td><td>Which profiles exist, and will they come back after a reboot?</td></tr>
+<tr><td><code>nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status</code></td><td>What is actually bound to what right now?</td></tr>
+<tr><td><code>systemctl is-enabled / is-active &lt;unit&gt;</code></td><td>Is the automation installed, running, and boot-persistent? (three different things)</td></tr>
+<tr><td><code>iw dev wlan0 info</code> / <code>iw dev uap0 info</code></td><td><strong>What channel is each role really on?</strong></td></tr>
+<tr><td><code>iw list | grep -A6 'valid interface combinations'</code></td><td>What does this chip physically permit?</td></tr>
+<tr><td><code>sudo iw dev uap0 station dump</code></td><td>Is anything actually associated?</td></tr>
+<tr><td><code>nmcli dev wifi list ifname wlan0</code></td><td>What bands/channels does the upstream router offer?</td></tr>
+</table>
+
+<div class="box bad">
+  <span class="lbl">A trap worth remembering</span>
+  <p>The first run of <code>iw dev uap0 station dump</code> was done <em>without</em> <code>sudo</code> and returned nothing, which looked like "no clients". It was actually a silent permission failure. <strong><code>iw</code> station dumps and scans need root.</strong> Also, <code>iw</code> lives in <code>/usr/sbin</code>, which is not on a normal user's <code>PATH</code> — <code>command -v iw</code> reported "missing" while <code>dpkg -l iw</code> showed it installed. Two different ways to be misled by the same tool in one session.</p>
+</div>
+
+<h2 id="model">4. The mental model: one radio, one channel</h2>
+
+<p>The Pi 4 has a single Wi-Fi chip (brcmfmac). "Concurrent AP+STA" does not mean two radios — it means one radio presenting two virtual netdevs. The chip states its own limits:</p>
+
+<pre><code>iw list | grep -A6 'valid interface combinations'
+<span class="out">valid interface combinations:
+  * #{ managed } &lt;= 2, ... total &lt;= 3, #channels &lt;= 2
+  * #{ managed } &lt;= 1, #{ AP } &lt;= 1, ... total &lt;= 4, <strong>#channels &lt;= 1</strong></span></code></pre>
+
+<p>Read the second line carefully. The combination that allows <code>managed</code> (your station) <em>plus</em> <code>AP</code> permits <strong><code>#channels &lt;= 1</code></strong>. One channel. Total.</p>
+
+<p>The station does not get a vote about this: it joins whatever channel the upstream router put it on, and the AP is dragged along whether its configuration agrees or not.</p>
+
+<figure>
+<svg viewBox="0 0 720 300" role="img" aria-label="Diagram: before, wlan0 on channel 44 and uap0 dragged along while its profile says channel 6, so 2.4 GHz clients cannot associate. After, station pinned to 2.4 GHz so both roles sit on channel 3.">
+  <defs>
+    <style>
+      .lbl{font:600 13px system-ui,sans-serif; fill:currentColor}
+      .sm{font:11px system-ui,sans-serif; fill:currentColor; opacity:.72}
+      .ttl{font:700 12px system-ui,sans-serif; letter-spacing:.08em}
+      .bx{fill:none; stroke:currentColor; stroke-width:1.5; opacity:.55}
+      .rad{fill:none; stroke:currentColor; stroke-width:2}
+    </style>
+  </defs>
+
+  <!-- BEFORE -->
+  <text class="ttl" x="10" y="20" fill="#94322b">BEFORE — BROKEN</text>
+  <rect class="rad" x="10" y="32" width="320" height="112" rx="8" stroke="#94322b"/>
+  <text class="sm" x="24" y="52">one physical radio · #channels &lt;= 1</text>
+  <rect class="bx" x="24" y="62" width="132" height="34" rx="5"/>
+  <text class="lbl" x="34" y="78">wlan0 (station)</text>
+  <text class="sm" x="34" y="91">ch 44 · 5 GHz</text>
+  <rect class="bx" x="184" y="62" width="132" height="34" rx="5"/>
+  <text class="lbl" x="194" y="78">uap0 (AP)</text>
+  <text class="sm" x="194" y="91">forced to ch 44</text>
+  <text class="sm" x="24" y="118" fill="#94322b">profile says: band bg, channel 6  ✗ disagrees with reality</text>
+  <text class="sm" x="24" y="134" fill="#94322b">nmcli reports "activated" · no error logged anywhere</text>
+
+  <rect class="bx" x="10" y="164" width="320" height="52" rx="6" stroke="#94322b"/>
+  <text class="lbl" x="24" y="184">EZVIZ H8c camera — 2.4 GHz only</text>
+  <text class="sm" x="24" y="200">cannot see a 5 GHz beacon → silently absent since Aug 4</text>
+
+  <!-- arrow -->
+  <path d="M348 120 L378 120" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+    <path d="M0 0 L8 4 L0 8 z" fill="currentColor"/></marker></defs>
+
+  <!-- AFTER -->
+  <text class="ttl" x="396" y="20" fill="#2f6b3f">AFTER — FIXED</text>
+  <rect class="rad" x="396" y="32" width="314" height="112" rx="8" stroke="#2f6b3f"/>
+  <text class="sm" x="410" y="52">one physical radio · #channels &lt;= 1</text>
+  <rect class="bx" x="410" y="62" width="130" height="34" rx="5"/>
+  <text class="lbl" x="420" y="78">wlan0 (station)</text>
+  <text class="sm" x="420" y="91">ch 3 · 2.4 GHz</text>
+  <rect class="bx" x="566" y="62" width="130" height="34" rx="5"/>
+  <text class="lbl" x="576" y="78">uap0 (AP)</text>
+  <text class="sm" x="576" y="91">follows to ch 3</text>
+  <text class="sm" x="410" y="118" fill="#2f6b3f">profile says: band bg, channel 3  ✓ agrees</text>
+  <text class="sm" x="410" y="134" fill="#2f6b3f">ap-channel-follow.sh keeps them equal</text>
+
+  <rect class="bx" x="396" y="164" width="314" height="52" rx="6" stroke="#2f6b3f"/>
+  <text class="lbl" x="410" y="184">EZVIZ H8c camera — 2.4 GHz only</text>
+  <text class="sm" x="410" y="200">rejoined by itself, 61 s after boot</text>
+
+  <text class="sm" x="10" y="248">The station picks the channel. The AP has no say. If they disagree, the AP looks configured</text>
+  <text class="sm" x="10" y="264">and reports "activated" while associating exactly zero clients — the failure is invisible from the AP side.</text>
+</svg>
+<figcaption>One radio holds exactly one channel. Everything in this document follows from that single constraint.</figcaption>
+</figure>
+
+<h2 id="diagnosis">5. The diagnosis, and the evidence for it</h2>
+
+<p>Four observations, each individually unremarkable, that only mean something together:</p>
+
+<pre><code><span class="c"># 1. The station is on 5 GHz.</span>
+iw dev wlan0 info | grep channel
+<span class="out">channel 44 (5220 MHz), width: 80 MHz</span>
+
+<span class="c"># 2. The AP netdev has been dragged there with it.</span>
+sudo iw dev uap0 info | grep channel
+<span class="out">channel 44 (5220 MHz), width: 80 MHz</span>
+
+<span class="c"># 3. But the AP's *profile* still claims 2.4 GHz channel 6 — and says it is fine.</span>
+nmcli -g 802-11-wireless.band,802-11-wireless.channel,GENERAL.STATE con show rpi-ap
+<span class="out">bg
+6
+activated</span>
+
+<span class="c"># 4. Nothing is associated.</span>
+sudo iw dev uap0 station dump | grep -c Station
+<span class="out">0</span></code></pre>
+
+<p>Then the confirmation, straight from the Pi's own log — the existing <code>ap-channel-follow.sh</code> had been shouting about it every 60 seconds and nobody was reading:</p>
+
+<pre><code>journalctl -t ap-follow -n 3
+<span class="out">ap-follow[1892]: wlan0 is on 5 GHz ch 44; the concurrent AP is 2.4 GHz
+                 and cannot follow. Pin the upstream to 2.4 GHz or add a USB dongle.</span></code></pre>
+
+<h3>The false lead worth understanding</h3>
+
+<p>The first inventory scan reported four devices on the AP — camera, two ESP32s, an iPhone. That looked like a working AP. It was not:</p>
+
+<pre><code>ip neigh show dev uap0
+<span class="out">192.168.50.25   INCOMPLETE
+192.168.50.246  INCOMPLETE
+192.168.50.15   INCOMPLETE</span>
+
+sudo cat /var/lib/NetworkManager/dnsmasq-uap0.leases
+<span class="out">1785848540 0c:a6:4c:b7:64:ea 192.168.50.25 H8c_BF9010198_EZVIZ *</span>
+<span class="c">                        ^ lease file dated Aug 4 — four days stale</span></code></pre>
+
+<p><code>INCOMPLETE</code> means an ARP request went out and nothing answered. Those devices were <strong>historical DHCP leases</strong>, not present hardware.</p>
+
+<div class="box key">
+  <span class="lbl">This cuts both ways</span>
+  <p>A DHCP lease outlives the device that took it. That is a hazard — a stale lease can be mistaken for a live device — but it is also a <em>gift</em>: it is how the camera was positively identified (<code>H8c_BF9010198_EZVIZ</code>, MAC <code>0c:a6:4c:b7:64:ea</code>) while it was switched off and unreachable. Identity from history; presence from ARP. Never confuse the two — which is why the discovery script below records a <code>live</code> flag.</p>
+</div>
+
+<h2 id="fix">6. The fix: pin the station to 2.4 GHz</h2>
+
+<p>Given one shared channel, the two roles must agree. There are three ways out, and the choice is dictated by the hardware:</p>
+
+<table>
+<tr><th>Option</th><th>Verdict</th></tr>
+<tr><td>Move the AP up to 5 GHz to match the station</td><td><strong>No.</strong> The EZVIZ H8c is 2.4 GHz-only. A 5 GHz AP cannot host the one device this whole system exists to reach.</td></tr>
+<tr><td>Add a USB Wi-Fi dongle so the AP gets its own radio</td><td>Correct in general, but needs hardware that is not present.</td></tr>
+<tr><td><strong>Pull the station down to 2.4 GHz</strong></td><td><strong>Yes</strong> — free, reversible, and the upstream supports it.</td></tr>
+</table>
+
+<p>The third only works if the upstream SSID actually has a 2.4 GHz radio. Verified before touching anything:</p>
+
+<pre><code>sudo nmcli dev wifi rescan ifname wlan0; sleep 6
+nmcli -t -f SSID,BSSID,CHAN,FREQ,SIGNAL dev wifi list ifname wlan0 | grep '^A 3:'
+<span class="out">A 3:20:23:51:31:43:8D:3:2422 MHz:70    &lt;- 2.4 GHz, channel 3, signal 70
+A 3:20:23:51:31:43:8C:44:5220 MHz:55   &lt;- 5 GHz, channel 44, signal 55</span></code></pre>
+
+<p>Two BSSIDs, one SSID — a dual-band router. And the 2.4 GHz BSS is the <em>stronger</em> of the two (70 vs 55), so the move costs nothing in link quality. NetworkManager had simply preferred 5 GHz on its own.</p>
+
+<p>One property on the station profile does the whole job:</p>
+
+<pre><code>nmcli con mod 'A 3' 802-11-wireless.band bg   <span class="c"># bg = 2.4 GHz; a = 5 GHz</span>
+nmcli con up  'A 3'</code></pre>
+
+<p>That is a persistent property of the saved profile, so it survives reboots with no extra unit. Everything downstream then happened without further intervention:</p>
+
+<pre><code>journalctl -t ap-follow -t wifi-apply -n 2
+<span class="out">ap-follow[2507]: wlan0 moved to ch 3 (AP had 6) -- resyncing
+wifi-apply[2474]: band lock applied</span></code></pre>
+
+<p>The pre-existing <code>ap-channel-follow.sh</code> noticed the station's new channel, rewrote the AP profile to match, and bounced it. Roughly 75 seconds later the camera reassociated on its own — no camera-side configuration was ever touched. It had been trying to find <code>RPi_AP</code> on 2.4 GHz the whole time.</p>
+
+<div class="box ok">
+  <span class="lbl">Result</span>
+  <p><code>apsta-doctor.sh</code> went from a channel-mismatch FAIL to <em>"Nothing wrong found on the Pi side."</em></p>
+</div>
+
+<h2 id="camera">7. The camera-discovery service</h2>
+
+<p>With the AP working, the second half: continuously inventory the AP's clients, pick out the camera by name, and publish its IP somewhere a program can read.</p>
+
+<h3>Reuse over reinvention</h3>
+
+<p>Your repo already contained the hard part. Rather than writing a new scanner, the existing tools were deployed to the Pi and a thin picker was written on top:</p>
+
+<table>
+<tr><th>Installed to <code>/usr/local/sbin/</code></th><th>Role</th></tr>
+<tr><td><code>ap-clients.sh</code></td><td>Existing. Joins station dump + DHCP leases + ARP + OUI vendor table into one inventory. <code>--json</code> makes it machine-readable.</td></tr>
+<tr><td><code>onvif-find.py</code></td><td>Existing. Asks cameras their own advertised name over ONVIF WS-Discovery.</td></tr>
+<tr><td><code>apsta-doctor.sh</code></td><td>Existing. Read-only diagnostic; now on the Pi so it can be run the moment something breaks.</td></tr>
+<tr><td><code>rpi-cam-find.sh</code></td><td><strong>New.</strong> Calls the above, picks the camera, writes the state files.</td></tr>
+</table>
+
+<h3>Four design decisions worth copying</h3>
+
+<h4>1 · Rank naming sources by trustworthiness</h4>
+<p>Cheap cameras lie, or say nothing at all. The picker tries five fields in a fixed order and stops at the first hit, so a hand-set alias always beats a guessed vendor string:</p>
+<pre><code>FIELDS = ("alias", "onvif", "dhcp_name", "name", "vendor")
+<span class="c">#          ^you set it   ^camera says it   ^camera asked for it   ^OUI guess</span></code></pre>
+<p>Here the match landed on <code>dhcp_name = "H8c_BF9010198_EZVIZ"</code> against the configured pattern <code>H8c</code>.</p>
+
+<h4>2 · Identify once, then track by MAC</h4>
+<p>Names are unreliable <em>over time</em>: ONVIF gets skipped on cheap runs, DHCP hostnames expire. A MAC does not change. So if no name matches this round but the previously-identified MAC is still on the AP, the script carries the identification forward and just updates the IP:</p>
+<pre><code>if best is None:
+    prev = json.load(open(cam_json))          <span class="c"># what we decided last time</span>
+    for d in devs:
+        if d["mac"].lower() == prev["mac"].lower() and d.get("ip"):
+            best = (99, d, "carried-forward", prev.get("matched_value", ""))</code></pre>
+<p>Without this, a scan that skipped ONVIF would "lose" a camera that never left.</p>
+
+<h4>3 · Record presence separately from identity</h4>
+<p>This is the stale-lease hazard from section 5, handled explicitly. <code>flags == 0x0</code> in <code>/proc/net/arp</code> means the entry is incomplete — nothing answered:</p>
+<pre><code>for line in open("/proc/net/arp").readlines()[1:]:
+    f = line.split()
+    if len(f) &gt;= 4 and f[0] == d["ip"] and f[2] != "0x0":
+        live = True</code></pre>
+<p>Consumers get <code>CAMERA_LIVE=1</code> or <code>0</code> and can decide whether a remembered address is good enough for what they are about to do.</p>
+
+<h4>4 · Make the expensive path optional</h4>
+<p>ONVIF discovery waits ~5 s for UDP replies. Doing that every 60 s forever is wasteful once the answer is known, so it is skipped whenever the camera's MAC is already in the ARP table:</p>
+<pre><code>if [ -n "$prev_mac" ] &amp;&amp; ip neigh show dev "$AP_IFACE" | grep -qi -- "$prev_mac"; then
+    USE_ONVIF=0
+fi</code></pre>
+
+<h3>Where the answer ends up</h3>
+
+<p>Four outputs, because different consumers want different shapes:</p>
+
+<pre><code>. /var/lib/rpi-ap-sta/camera.env   <span class="c"># shell: CAMERA_IP, CAMERA_MAC, CAMERA_RTSP, CAMERA_LIVE</span>
+cat /var/lib/rpi-ap-sta/camera.json <span class="c"># full record incl. why it matched</span>
+cat /run/rpi-camera-ip              <span class="c"># just the IP, one line</span>
+ping ipcam                          <span class="c"># /etc/hosts alias, kept current</span>
+
+cat /var/lib/rpi-ap-sta/ap-clients.json <span class="c"># every device seen on the AP</span></code></pre>
+
+<p>The <code>/etc/hosts</code> line is maintained with a sentinel comment and rewritten via <code>cat &gt;</code> rather than <code>mv</code>, so the file keeps its inode and permissions:</p>
+<pre><code>tmp=$(mktemp)
+grep -v '# rpi-cam-find$' /etc/hosts &gt; "$tmp"
+printf '%s\t%s\t# rpi-cam-find\n' "$ip" "$CAM_ALIAS" &gt;&gt; "$tmp"
+cat "$tmp" &gt; /etc/hosts    <span class="c"># NOT mv — preserves inode and mode</span></code></pre>
+
+<h3>Scheduling, and one systemd subtlety</h3>
+
+<pre><code><span class="c"># /etc/systemd/system/rpi-cam-find.timer</span>
+OnBootSec=45s        <span class="c"># uap0 exists, DHCP has had a chance to hand out a lease</span>
+OnUnitActiveSec=60s
+
+<span class="c"># /etc/systemd/system/rpi-cam-find.service</span>
+Type=oneshot
+SuccessExitStatus=3</code></pre>
+
+<div class="box key">
+  <span class="lbl">Why <code>SuccessExitStatus=3</code> matters</span>
+  <p>The script exits <code>3</code> for "AP is healthy, the camera just is not connected yet". That is a completely normal state — the camera may be powered off. Without this line systemd would mark the unit <code>failed</code> every minute, filling the journal with noise and burying real failures. <strong>Give your "nothing to do" case its own exit code and tell systemd it is a success.</strong></p>
+</div>
+
+<h2 id="persist">8. Making it survive a reboot, and proving it did</h2>
+
+<p>"Enabled", "active", and "will work after a reboot" are three different claims. Checked all of them before rebooting:</p>
+
+<pre><code>for u in uap0.service ap-channel-follow.timer rpi-cam-find.timer NetworkManager; do
+    printf '%-28s %s\n' "$u" "$(systemctl is-enabled $u)"
+done
+<span class="out">uap0.service                 enabled
+ap-channel-follow.timer      enabled
+rpi-cam-find.timer           enabled
+NetworkManager               enabled</span>
+
+nmcli -g connection.autoconnect,802-11-wireless.band con show 'A 3'
+<span class="out">yes
+bg</span></code></pre>
+
+<div class="box warn">
+  <span class="lbl">A mistake this catches</span>
+  <p><code>systemctl enable</code> arranges for a unit to start at <em>next</em> boot; it does not start it now. Right after enabling, <code>rpi-cam-find.timer</code> read <code>enabled / inactive</code> — it would have worked after the reboot but was doing nothing in the meantime. <code>enable --now</code>, or an explicit <code>start</code>, closes that gap.</p>
+</div>
+
+<p>Then the real test — a reboot, which is the only honest proof that nothing depended on a shell that has since exited:</p>
+
+<pre><code>sudo systemd-run --on-active=3 --collect /sbin/reboot</code></pre>
+
+<p>Post-reboot, at 1 minute uptime, with nothing typed in between:</p>
+
+<table>
+<tr><th>Check</th><th>Result</th></tr>
+<tr><td>Station</td><td><code>A 3</code>, 2422 MHz (ch 3), 192.168.0.110</td></tr>
+<tr><td>AP</td><td><code>uap0</code> ch 3, 192.168.50.1/24, <code>rpi-ap</code> connected</td></tr>
+<tr><td>Camera</td><td>associated 61 s after boot, unprompted</td></tr>
+<tr><td>State files</td><td><code>CAMERA_IP=192.168.50.25</code>, <code>CAMERA_LIVE=1</code></td></tr>
+<tr><td>Timers</td><td><code>uap0.service</code>, <code>ap-channel-follow.timer</code>, <code>rpi-cam-find.timer</code> all active</td></tr>
+<tr><td>Camera reachability</td><td>ping 4 ms; ports 80, 554, 8000 open</td></tr>
+</table>
+
+<h2 id="reference">9. Reference</h2>
+
+<h3>Everything installed</h3>
+<table>
+<tr><th>Path</th><th>What it is</th></tr>
+<tr><td><code>/usr/local/sbin/rpi-cam-find.sh</code></td><td>New. Scans the AP, picks the camera, writes state.</td></tr>
+<tr><td><code>/usr/local/sbin/ap-clients.sh</code></td><td>Deployed from repo. Client inventory.</td></tr>
+<tr><td><code>/usr/local/sbin/onvif-find.py</code></td><td>Deployed from repo. ONVIF name discovery.</td></tr>
+<tr><td><code>/usr/local/sbin/apsta-doctor.sh</code></td><td>Deployed from repo. Read-only diagnostic.</td></tr>
+<tr><td><code>/etc/default/rpi-ap-camera</code></td><td>New. <code>CAM_PATTERN</code>, <code>CAM_ALIAS</code>, <code>USE_ONVIF</code>, <code>HOSTS_ENTRY</code>.</td></tr>
+<tr><td><code>/etc/default/rpi-ap-sta</code></td><td>Pre-existing. <code>STA_IFACE</code>, <code>AP_IFACE</code>, <code>AP_CON</code>.</td></tr>
+<tr><td><code>/etc/systemd/system/rpi-cam-find.{service,timer}</code></td><td>New. 60 s scan loop.</td></tr>
+<tr><td><code>/var/lib/rpi-ap-sta/</code></td><td>New. <code>camera.json</code>, <code>camera.env</code>, <code>ap-clients.json</code>.</td></tr>
+</table>
+
+<h3>Facts about this deployment</h3>
+<table>
+<tr><td>Pi</td><td><code>192.168.0.110</code>, user <code>rpi4</code>, passwordless <code>sudo</code>, <code>eth0</code> DOWN</td></tr>
+<tr><td>Upstream</td><td>SSID <code>A 3</code>, pinned to 2.4 GHz, ch 3</td></tr>
+<tr><td>AP</td><td>SSID <code>RPi_AP</code>, psk <code>raspberry123</code>, 192.168.50.1/24, NAT via <code>ipv4.method=shared</code></td></tr>
+<tr><td>Camera</td><td>EZVIZ <code>H8c_BF9010198_EZVIZ</code>, MAC <code>0c:a6:4c:b7:64:ea</code>, 192.168.50.25, RTSP on 554</td></tr>
+</table>
+
+<h3>Driving it from Windows</h3>
+<pre><code><span class="c"># PuTTY's plink is the only common Windows SSH client that takes a password
+# non-interactively; OpenSSH's ssh.exe has no such flag.</span>
+"C:/Program Files/PuTTY/plink.exe" -ssh -l rpi4 -pw 123456 -batch 192.168.0.110 "uptime"
+
+<span class="c"># Push a file. tr -d '\r' is mandatory: a stray CR makes bash fail with
+# obscure "command not found" errors on the last word of every line.</span>
+tr -d '\r' &lt; local.sh | "C:/.../plink.exe" -ssh -l rpi4 -pw 123456 -batch 192.168.0.110 \
+    "sudo tee /usr/local/sbin/local.sh &gt;/dev/null"</code></pre>
+
+<h3>Troubleshooting, in the order to check</h3>
+<table>
+<tr><th>Symptom</th><th>First thing to check</th></tr>
+<tr><td>AP clients all disappeared</td><td><code>iw dev wlan0 info | grep channel</code>. If &gt; 14, the station moved to 5 GHz and the 2.4 GHz AP cannot follow. <strong>Check this before anything AP-related.</strong></td></tr>
+<tr><td>SSID visible, cannot associate</td><td>Channel mismatch between <code>iw dev wlan0 info</code> and <code>iw dev uap0 info</code>. Run <code>sudo /usr/local/sbin/ap-channel-follow.sh</code>.</td></tr>
+<tr><td>Associates but gets no IP</td><td><code>nmcli -g ipv4.method con show rpi-ap</code> must be <code>shared</code>, and <code>dnsmasq-base</code> must be installed.</td></tr>
+<tr><td>Camera IP is stale</td><td><code>CAMERA_LIVE=0</code> — the record came from a lease, the device is not present.</td></tr>
+<tr><td>Anything else</td><td><code>sudo bash /usr/local/sbin/apsta-doctor.sh</code> — nine checks, ranked fixes, changes nothing.</td></tr>
+<tr><td>Pi unreachable after a Wi-Fi change</td><td>No wired fallback. Physical access, or wait for an armed rollback timer.</td></tr>
+</table>
+
+<h2 id="adapt">10. Adapting it</h2>
+
+<h4>Different camera, or a second one</h4>
+<p>Edit <code>CAM_PATTERN</code> in <code>/etc/default/rpi-ap-camera</code> (<code>*</code> is a wildcard, e.g. <code>H8c-*</code>), then <code>sudo systemctl restart rpi-cam-find.service</code>. If the device advertises no usable name, identify it by power-cycling and label it permanently:</p>
+<pre><code>sudo bash /usr/local/sbin/ap-clients.sh --find              <span class="c"># unplug it, watch what leaves</span>
+sudo bash /usr/local/sbin/ap-clients.sh --alias 192.168.50.25 gate-cam</code></pre>
+
+<h4>Pin the camera to a fixed IP</h4>
+<p>Not done here — the current design records whatever DHCP gives. To pin it, now that the MAC is known:</p>
+<pre><code>sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+echo 'dhcp-host=0c:a6:4c:b7:64:ea,192.168.50.90,ipcam' \
+  | sudo tee /etc/NetworkManager/dnsmasq-shared.d/ipcam.conf
+sudo nmcli con down rpi-ap &amp;&amp; sudo nmcli con up rpi-ap</code></pre>
+
+<h4>Keep 5 GHz upstream</h4>
+<p>The only real answer is a second radio: a USB Wi-Fi dongle for <code>uap0</code>, leaving the built-in chip free for 5 GHz. Then <code>#channels &lt;= 1</code> no longer binds, because there are two radios.</p>
+
+<div class="box warn">
+  <span class="lbl">Standing risk in this deployment</span>
+  <p><code>A 3</code> is now locked to <code>band bg</code>. If that router's 2.4 GHz radio is ever turned off or renamed, the Pi will not reconnect — and with <code>eth0</code> DOWN there is no other way in. If the Pi is hard to reach physically, bring <code>eth0</code> up as a standing safety net.</p>
+</div>
+
+<footer>
+  Field notes from the 2026-08-08 session. Companion documents in this folder:
+  <code>RPI4_WIFI_STATION_AND_AP.html</code>, <code>RPI4_AP_STA_AUTOSTART.html</code>,
+  <code>RPI4_AP_CLIENT_DISCOVERY.html</code>.
+</footer>
+
+</div>
+</body>
+</html>

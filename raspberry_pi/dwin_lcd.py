@@ -132,7 +132,7 @@ class DwinLCD:
         self.port = port
         self.baud = baud
         self.timeout = timeout
-        self.debug = debug   # retained for API compatibility (no longer prints)
+        self.debug = debug   # True -> dump every frame sent/received
         self._lock = threading.RLock()
         self._ser: Optional[serial.Serial] = None
         # RTC fields are populated by read_rtc() (mirrors the Arduino members).
@@ -176,6 +176,15 @@ class DwinLCD:
             temp_list.append(item)
         return temp_list
 
+    def _dump(self, tag: str, raw) -> None:
+        """Print one frame as hex when debug is on (the --debug frame trace).
+
+        This is the tool for "the panel button does nothing": if a press
+        produces no RX line here, the panel is not auto-uploading at all.
+        """
+        if self.debug:
+            print(f"[dwin] {tag} {bytes(raw).hex(' ').upper()}", flush=True)
+
     def _read_frame(self, timeout: float) -> Optional[bytes]:
         """Read one full DGUS frame (sync on 5A A5, then `len` bytes)."""
         ser = self._ser
@@ -201,12 +210,16 @@ class DwinLCD:
         if len(body) != length:
             return None
         out = bytes([_HDR0, _HDR1, length]) + body
+        self._dump("RX", out)
         return out
 
-    def _read_reply(self, addr: int, timeout: float) -> bytes:
+    def _read_reply(self, addr: int, timeout: float, sink=None) -> bytes:
         """Return the next 0x83 read-reply whose address == addr.
 
         Skips unrelated frames (e.g. async touch events). Raises on timeout.
+        `sink`, if given, is called with each skipped frame as a DwinEvent so an
+        event loop that polls a VP does not silently lose a button press that
+        arrived mid-poll.
         """
         end = time.monotonic() + timeout
         while True:
@@ -214,9 +227,13 @@ class DwinLCD:
             if remaining <= 0:
                 raise DwinTimeout(f"no reply for VP 0x{addr:04X}")
             f = self._read_frame(remaining)
-            if f and len(f) >= 9 and f[3] == _CMD_READ \
+            if not f:
+                continue
+            if len(f) >= 9 and f[3] == _CMD_READ \
                     and f[4] == ((addr >> 8) & 0xFF) and f[5] == (addr & 0xFF):
                 return f
+            if sink is not None:
+                sink(self._to_event(f))
 
     def _drain_ack(self) -> None:
         """Best-effort read of the write ACK (5A A5 03 82 4F 4B); ignore it."""
@@ -226,21 +243,25 @@ class DwinLCD:
         """Write a frame (used for 0x82 writes; reads go through _query)."""
         # _build() returns a list of ints; normalise to bytes for the wire.
         raw = bytes(frame)
+        self._dump("TX", raw)
         self._ser.write(raw)
         self._ser.flush()   # block until the bytes are actually clocked out
 
-    def _query(self, addr: int, n_words: int,
-               timeout: Optional[float] = None) -> bytes:
-        """Flush stale input, send a 0x83 read, return the matching reply frame.
+    def _query(self, addr: int, n_words: int, timeout: Optional[float] = None,
+               flush: bool = True, sink=None) -> bytes:
+        """Send a 0x83 read and return the matching reply frame.
 
-        This driver is request/response: it does NOT deliver asynchronous touch
-        events -- poll the relevant VP (e.g. the operator-offset VP) instead.
+        flush=True (default) drops whatever is already buffered first, which is
+        right for a standalone read. Inside an event loop pass flush=False plus a
+        `sink` so queued/interleaved touch frames are handed back instead of
+        discarded.
         """
         to = self.timeout if timeout is None else timeout
         with self._lock:
-            self._ser.reset_input_buffer()
-            self._ser.write(self._build(_CMD_READ, addr, bytes([n_words])))
-            return self._read_reply(addr, to)
+            if flush:
+                self._ser.reset_input_buffer()
+            self._send(self._build(_CMD_READ, addr, bytes([n_words])))
+            return self._read_reply(addr, to, sink=sink)
 
     # ----- connection ------------------------------------------------------- #
     def is_connected(self) -> bool:
@@ -327,12 +348,27 @@ class DwinLCD:
     def read_single_bit(self, addr: int, bit: int) -> bool:
         return bool(self.read_single_reg(addr) & (1 << bit))
 
-    def read_reg(self, addr: int, n_words: int) -> bytes:
-        """Read `n_words` 16-bit words; returns the raw 2*n_words data bytes."""
-        f = self._query(addr, n_words)
+    def read_reg(self, addr: int, n_words: int, timeout: Optional[float] = None,
+                 flush: bool = True, sink=None) -> bytes:
+        """Read `n_words` 16-bit words; returns the raw 2*n_words data bytes.
+
+        flush/sink are passed through to _query -- use flush=False + sink from an
+        event loop so a touch frame arriving mid-read is not thrown away.
+        """
+        f = self._query(addr, n_words, timeout=timeout, flush=flush, sink=sink)
         return f[7:7 + 2 * n_words]
 
     # ----- touch events (unsolicited frames from the panel) ----------------- #
+    @staticmethod
+    def _to_event(f: bytes) -> DwinEvent:
+        """Wrap a raw frame as a DwinEvent (addr/value filled for 0x83 only)."""
+        cmd = f[3] if len(f) > 3 else 0
+        addr = value = 0
+        if cmd == _CMD_READ and len(f) >= 9:
+            addr = (f[4] << 8) | f[5]
+            value = (f[7] << 8) | f[8]
+        return DwinEvent(cmd, addr, value, f)
+
     def read_event(self, timeout: float = 0.1) -> Optional[DwinEvent]:
         """Read ONE unsolicited frame the panel pushed (touch auto-upload).
 
@@ -348,12 +384,7 @@ class DwinLCD:
             f = self._read_frame(timeout)
         if not f:
             return None
-        cmd = f[3] if len(f) > 3 else 0
-        addr = value = 0
-        if cmd == _CMD_READ and len(f) >= 9:
-            addr = (f[4] << 8) | f[5]
-            value = (f[7] << 8) | f[8]
-        return DwinEvent(cmd, addr, value, f)
+        return self._to_event(f)
 
     # ----- RTC -------------------------------------------------------------- #
     def read_rtc(self) -> RtcTime:

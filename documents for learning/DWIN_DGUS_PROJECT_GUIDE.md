@@ -178,7 +178,7 @@ This matches the layouts we already drew in `HMI_images/generate_hmi.py`.
 
 ## 5. This project's VP map (DGUS ↔ firmware contract)
 
-Confirmed against the compiled `.bin` files (✓) or declared in `dwin_hmi_app.py`
+Confirmed against the compiled `.bin` files (✓) or declared in the Pi firmware
 (△ = wire it in the DGUS Tool to match):
 
 | VP | Meaning | Direction | Widget / touch type | In bins |
@@ -186,25 +186,86 @@ Confirmed against the compiled `.bin` files (✓) or declared in `dwin_hmi_app.p
 | `0x0001` | current depth (TEXT) | Pi → panel | Text Variable | ✓ show |
 | `0x0200` | driver name (TEXT ≤20) | Pi → panel | Text Variable | △ |
 | `0x0300` | target depth field | Pi → panel | Text/Data Variable | △ |
-| `0x0012` | beam length (4-char) | panel → Pi | Variable Data Input + **auto-upload** | ✓ show |
-| `0x0016` | stick length | panel → Pi | Variable Data Input + **auto-upload** | ✓ show |
+| `0x1200` | beam length (TEXT, 8 B) | panel → Pi | Variable Data Input + **auto-upload** | △ **new** |
+| `0x2000` | stick length (TEXT, 8 B) | panel → Pi | Variable Data Input + **auto-upload** | △ |
 | `0x0330` | Wi-Fi SSID | panel → Pi | Variable Data Input + **auto-upload** | ✓ show |
 | `0x0350` | Wi-Fi password | panel → Pi | Variable Data Input + **auto-upload** | ✓ show |
 | `0x0030` | "on settings page" flag = `0x0022` | panel → Pi | Return Key Value | ✓ touch |
 | `0x0011` | SAVE button = `0x0022` | panel → Pi | Return Key Value + **auto-upload** | ✓ touch |
 | `0x0010` | CANCEL button = `0x0022` | panel → Pi | Return Key Value + **auto-upload** | ✓ touch |
+| `0x1000` | main-page TARE key = `0x00FF` | panel → Pi | Return Key Value + **auto-upload** | △ |
+| `0x0400` / `0x0401` | HSE / over-dig alarm flag | Pi → panel | Data or Icon Variable | △ |
 
-Note these are **low VPs** (`0x0010`–`0x0016` overlap the DGUS system RTC block
-on paper). Both reference projects use this low range anyway and it works in
-their DGUS configuration — so it's an accepted convention *here*. If beam/stick
-ever read back as garbage or fight the RTC, relocate user data to ≥`0x1000`.
+### 5.1 Why the beam length never worked (`0x0012`)
+
+DGUS II reserves **VP `0x0000`–`0x0FFF` for the kernel** — "System Variable
+Interface", ch. 5 of `T5L_DGUSII-Application-Development-Guide-V2.6.pdf`, p. 45:
+*"System variable address range: 0x0000-0x0FFF."* Inside that window the kernel
+writes some registers **by itself**:
+
+| VP | Register | Kernel behaviour |
+|----|----------|------------------|
+| `0x0010`–`0x0013` | `RTC` (R/W, 4 words) | rewritten **every second** |
+| `0x0014` | `PIC_Now` | current page, **read-only** |
+| `0x0015` | `GUI_Status` | GUI busy flag |
+| `0x0016`–`0x0019` | `TP_Status` (4 words) | rewritten on **every touch** |
+| `0x0031` / `0x0032`+ | `LED_Now` / `AD0-AD7` | live backlight / ADC |
+| `0x0100`–`0x02FF` | FSK bus interface | 512 words |
+
+The beam length lived at **`0x0012` = RTC hour/minute**, and its 8-byte text
+field ran on over RTC-second and `PIC_Now`. Whatever the operator typed was
+overwritten by the clock within a second, and reading it back returned clock
+bytes — which is exactly the "I set the length and nothing changes" symptom. The
+old stick VP `0x0016` sat in `TP_Status`, destroyed by the next screen touch.
+
+The other low VPs (`0x0001`, `0x0200`, `0x0300`, `0x0330`, `0x0350`, `0x0400`)
+are also inside the system window, but they land on *dormant* command/config
+registers, which is why they appear to work. They are still squatting and should
+be relocated to ≥ `0x1000` when the project is next rebuilt.
+
+### 5.2 Panel-side steps to finish the fix
+
+In `D:\Embedded\Excavator Project\HMI`, on `02_settings_screen`:
+
+1. Select the **beam length** field. Change its VP from `0x0012` to **`0x1200`**
+   (any free address ≥ `0x1000`; the Pi default is `0x1200`).
+2. Make sure each length field is a **Variable Data Input** touch control (not
+   just a Text Variable display) linked to `03_numeric_keypad`, with **string
+   length = 8 bytes** and **data auto-upload ticked**. In the current build the
+   lengths appear only in `14ShowFile.bin` (display) and not in
+   `13TouchFile.bin` (touch) — so there is nothing to type into and nothing to
+   upload.
+3. Confirm the stick field is `0x2000` with the same settings.
+4. Rebuild, redeploy `DWIN_SET`, power-cycle.
+
+The Pi accepts the old and the new address at the same time, so it keeps working
+through the transition. To match a different address without editing code:
+
+```bash
+python3 monitoring_control.py --beam-vp 0x1200 --stick-vp 0x2000 --len-bytes 8
+python3 monitoring_control.py --debug     # dump every TX/RX frame
+```
+
+`--debug` prints `[dwin] RX 5A A5 0C 83 12 00 04 34 32 30 30 ...` for each frame
+the panel pushes. No RX line on a press ⇒ auto-upload is off. An
+`[hmi] recv UNHANDLED VP 0x....` line names the address the panel really uses —
+feed that to `--beam-vp` / `--stick-vp`. At startup the firmware also audits its
+whole VP map and prints every address that collides with a kernel register.
 
 ---
 
 ## 6. Gotchas learned
 
+* **Never put user data below `0x1000`.** That whole range belongs to the DGUS
+  kernel; `RTC` (`0x0010`) and `TP_Status` (`0x0016`) overwrite it on their own.
+  This cost us the beam length — see §5.1.
+* **A Text Variable is not an input.** A display widget shows a VP; only a
+  **Variable Data Input** touch control lets the operator type into it. A field
+  present in `14ShowFile.bin` but absent from `13TouchFile.bin` is read-only.
 * **Auto-upload must be ON** for every control the Pi reacts to — this is the
-  single most common "button does nothing" cause.
+  single most common "button does nothing" cause. Belt and braces on the Pi side:
+  `monitoring_control.py` also *reads* the length VPs back on SAVE, so lengths
+  work even when the tick is missing.
 * **Resolution lock**: `.bmp` size, `SCREENDSIZE`, and `T5LCFG.CFG` must all be
   480×272. A mismatched bmp imports blank/scaled.
 * **Protocol/baud**: DGUS mode + 115200 to match `dwin_lcd.py`. Don't reuse

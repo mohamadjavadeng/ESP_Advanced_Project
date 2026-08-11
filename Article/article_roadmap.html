@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conference Article Roadmap - ESP32 + RPi IoT &amp; AI Project</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #1a1d2e;
+            --accent: #6c63ff;
+            --accent2: #00d4aa;
+            --accent3: #ff6b6b;
+            --accent4: #ffd93d;
+            --text: #e2e8f0;
+            --muted: #8892b0;
+            --border: #2d3148;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            padding: 0;
+        }
+
+        /* Header */
+        .hero {
+            background: linear-gradient(135deg, #1a1d2e 0%, #2d1b69 50%, #1a3a4a 100%);
+            padding: 60px 40px;
+            text-align: center;
+            border-bottom: 2px solid var(--accent);
+        }
+        .hero h1 {
+            font-size: 2.4em;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 12px;
+        }
+        .hero .subtitle {
+            color: var(--muted);
+            font-size: 1.15em;
+            max-width: 750px;
+            margin: 0 auto;
+        }
+        .hero .badge-row {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .badge {
+            display: inline-block;
+            padding: 5px 16px;
+            border-radius: 20px;
+            font-size: 0.82em;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: rgba(108,99,255,0.12);
+            color: var(--accent);
+        }
+        .badge.green { background: rgba(0,212,170,0.12); color: var(--accent2); border-color: rgba(0,212,170,0.3); }
+        .badge.red { background: rgba(255,107,107,0.12); color: var(--accent3); border-color: rgba(255,107,107,0.3); }
+        .badge.yellow { background: rgba(255,217,61,0.12); color: var(--accent4); border-color: rgba(255,217,61,0.3); }
+
+        /* Container */
+        .container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+
+        /* Section */
+        .section {
+            margin-bottom: 48px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 32px 36px;
+            position: relative;
+            overflow: hidden;
+        }
+        .section::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 4px; height: 100%;
+        }
+        .section.purple::before { background: var(--accent); }
+        .section.green::before { background: var(--accent2); }
+        .section.red::before { background: var(--accent3); }
+        .section.yellow::before { background: var(--accent4); }
+
+        .section h2 {
+            font-size: 1.55em;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .section h2 .num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px; height: 36px;
+            border-radius: 10px;
+            font-size: 0.6em;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .section.purple h2 .num { background: rgba(108,99,255,0.2); color: var(--accent); }
+        .section.green h2 .num { background: rgba(0,212,170,0.2); color: var(--accent2); }
+        .section.red h2 .num { background: rgba(255,107,107,0.2); color: var(--accent3); }
+        .section.yellow h2 .num { background: rgba(255,217,61,0.2); color: var(--accent4); }
+
+        .section .section-sub {
+            color: var(--muted);
+            font-size: 0.95em;
+            margin-bottom: 20px;
+        }
+
+        /* Lists */
+        .checklist { list-style: none; }
+        .checklist li {
+            padding: 10px 0 10px 32px;
+            position: relative;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .checklist li:last-child { border-bottom: none; }
+        .checklist li::before {
+            content: '☐';
+            position: absolute;
+            left: 4px;
+            color: var(--accent);
+            font-size: 1.1em;
+        }
+        .checklist li.done::before { content: '☑'; color: var(--accent2); }
+
+        .checklist li strong { color: #fff; }
+        .checklist li .detail { color: var(--muted); font-size: 0.9em; display: block; margin-top: 2px; }
+
+        /* Timeline */
+        .timeline { position: relative; padding-left: 30px; }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 8px; top: 0; bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--accent), var(--accent2), var(--accent3));
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 28px;
+            padding-left: 12px;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -26px; top: 8px;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            border: 2px solid var(--accent);
+            background: var(--card);
+        }
+        .timeline-item.done::before { background: var(--accent2); border-color: var(--accent2); }
+        .timeline-item h4 { color: #fff; margin-bottom: 4px; }
+        .timeline-item .week { color: var(--accent); font-size: 0.8em; font-weight: 600; }
+        .timeline-item p { color: var(--muted); font-size: 0.92em; }
+
+        /* Grid */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 768px) {
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
+        }
+
+        .card-mini {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .card-mini h4 { margin-bottom: 8px; color: #fff; font-size: 1em; }
+        .card-mini p { color: var(--muted); font-size: 0.88em; }
+        .card-mini .icon { font-size: 1.6em; margin-bottom: 8px; display: block; }
+
+        /* Table of contents */
+        .toc {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 24px;
+        }
+        .toc a {
+            display: block;
+            padding: 14px 18px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            text-decoration: none;
+            transition: all 0.2s;
+            font-size: 0.92em;
+        }
+        .toc a:hover { border-color: var(--accent); background: rgba(108,99,255,0.08); }
+        .toc a .toc-num { color: var(--accent); font-weight: 700; margin-right: 8px; }
+
+        /* Code block */
+        .code-block {
+            background: #0d0f18;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px 24px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 0.85em;
+            overflow-x: auto;
+            margin: 16px 0;
+            line-height: 1.8;
+            color: var(--muted);
+        }
+        .code-block .comment { color: #5c6370; }
+        .code-block .keyword { color: var(--accent); }
+        .code-block .string { color: var(--accent2); }
+        .code-block .section-name { color: var(--accent4); }
+
+        /* Tip box */
+        .tip {
+            background: rgba(0,212,170,0.08);
+            border-left: 3px solid var(--accent2);
+            padding: 14px 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+            font-size: 0.92em;
+        }
+        .tip strong { color: var(--accent2); }
+
+        .warn {
+            background: rgba(255,107,107,0.08);
+            border-left: 3px solid var(--accent3);
+            padding: 14px 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+            font-size: 0.92em;
+        }
+        .warn strong { color: var(--accent3); }
+
+        /* Progress bar */
+        .progress-container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            height: 8px;
+            margin: 8px 0 4px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            border-radius: 20px;
+            transition: width 0.5s;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 40px;
+            color: var(--muted);
+            font-size: 0.85em;
+            border-top: 1px solid var(--border);
+            margin-top: 20px;
+        }
+
+        /* Print */
+        @media print {
+            body { background: #fff; color: #222; }
+            .section { border-color: #ddd; background: #fafafa; }
+            .hero { background: none; border-color: #6c63ff; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ===== HERO ===== -->
+<div class="hero">
+    <h1>Conference Article Roadmap</h1>
+    <p class="subtitle">
+        A step-by-step guide to writing a publishable paper for an IoT &amp; AI conference, based on the
+        <strong>ESP32 + Raspberry Pi Excavation Monitoring &amp; Safety System</strong> project.
+    </p>
+    <div class="badge-row">
+        <span class="badge">ESP32</span>
+        <span class="badge green">Raspberry Pi</span>
+        <span class="badge red">YOLO Object Detection</span>
+        <span class="badge yellow">IoT Sensors</span>
+        <span class="badge">Edge AI</span>
+        <span class="badge green">Real-Time Monitoring</span>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- ===== NAVIGATION ===== -->
+    <div class="section purple" style="margin-top: 20px;">
+        <h2>Quick Navigation</h2>
+        <div class="toc">
+            <a href="#phase0"><span class="toc-num">0</span> Project Summary</a>
+            <a href="#phase1"><span class="toc-num">1</span> Choose Target Conference</a>
+            <a href="#phase2"><span class="toc-num">2</span> Paper Structure</a>
+            <a href="#phase3"><span class="toc-num">3</span> Writing Each Section</a>
+            <a href="#phase4"><span class="toc-num">4</span> Figures &amp; Diagrams</a>
+            <a href="#phase5"><span class="toc-num">5</span> Formatting &amp; Submission</a>
+            <a href="#phase6"><span class="toc-num">6</span> Timeline &amp; Checklist</a>
+            <a href="#phase7"><span class="toc-num">7</span> Paper Outline Template</a>
+        </div>
+    </div>
+
+    <!-- ===== PHASE 0: PROJECT SUMMARY ===== -->
+    <div class="section green" id="phase0">
+        <h2><span class="num">0</span> Your Project at a Glance</h2>
+        <p class="section-sub">Understand what you have before you write. This project has strong publication potential.</p>
+
+        <div class="grid-2">
+            <div class="card-mini">
+                <span class="icon">&#9881;</span>
+                <h4>Core System</h4>
+                <p>A dual-ESP32 + Raspberry Pi architecture for real-time excavation depth monitoring. Two ESP32 devices measure bucket arm angles (IMU sensors) and stream raw data over WiFi to a Raspberry Pi hub, which computes dig depth in real-time and displays results on a DWIN LCD.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128065;</span>
+                <h4>AI / Computer Vision</h4>
+                <p>YOLOv4-tiny and YOLOv8n object detection for person safety monitoring around the excavation zone. EZVIZ IP camera integration with RTSP streaming, person-zone alarm detection, and automatic WhatsApp alert notifications with snapshot images.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128225;</span>
+                <h4>IoT &amp; Communication</h4>
+                <p>WiFi AP/STA dual-mode networking between ESP32s and RPi. RFID (RC522) access logging. Geofencing with GeoBox token verification. Multi-protocol data flow: UDP/TCP sensor streams, MQTT-style pub/sub, REST API on the Pi.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128200;</span>
+                <h4>Monitoring &amp; Dashboard</h4>
+                <p>Real-time excavation monitoring with depth calculations, alarm management, sensor health checks, and a comprehensive Raspberry Pi dashboard. Geolocation tracking and excavation site mapping.</p>
+            </div>
+        </div>
+
+        <div class="tip" style="margin-top: 20px;">
+            <strong>Publication Angle:</strong> This project combines <em>embedded IoT</em>, <em>edge AI inference</em>, and <em>industrial safety</em> &mdash; a hot topic in conferences like IEEE IoT, WF-IoT, or industrial AI workshops. The dual-architecture evolution (ESP32-centric &rarr; RPi-centric) also makes an interesting design study.
+        </div>
+    </div>
+
+    <!-- ===== PHASE 1: CHOOSE CONFERENCE ===== -->
+    <div class="section purple" id="phase1">
+        <h2><span class="num">1</span> Choose Your Target Conference</h2>
+        <p class="section-sub">Select a venue that matches your project's scope. Different conferences value different aspects.</p>
+
+        <div class="grid-3">
+            <div class="card-mini">
+                <h4>Top-Tier IoT</h4>
+                <p>
+                    <strong>IEEE IoT Journal</strong><br>
+                    <strong>ACM SenSys</strong><br>
+                    <strong>IEEE WF-IoT</strong><br>
+                    <strong>ACM IoTDI</strong><br>
+                    <span style="color:var(--accent4);font-size:0.85em;">High impact, long review (3-6 months)</span>
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Industrial / Applied AI</h4>
+                <p>
+                    <strong>IEEE INDIN</strong><br>
+                    <strong>IEEE IECON</strong><br>
+                    <strong>IFAC ACC</strong><br>
+                    <strong>IEEE CASE</strong><br>
+                    <span style="color:var(--accent4);font-size:0.85em;">Great fit for excavation/Construction</span>
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Workshops &amp; Conferences</h4>
+                <p>
+                    <strong>IEEE ICPS</strong><br>
+                    <strong>MDPI Sensors</strong><br>
+                    <strong>Electronics (MDPI)</strong><br>
+                    <strong>Applied Sciences</strong><br>
+                    <span style="color:var(--accent4);font-size:0.85em;">Faster review, open access</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="tip">
+            <strong>Recommendation for this project:</strong> IEEE INDIN (Industrial Informatics) or MDPI Electronics/Sensors are the best fit. They value practical IoT+AI systems with real-world applications like construction safety.
+        </div>
+
+        <div class="warn">
+            <strong>Before writing:</strong> Download the conference template (LaTeX or Word) and read 3-5 recent papers from the same venue. Note the expected length (usually 6-10 pages), figure limits, and citation style.
+        </div>
+    </div>
+
+    <!-- ===== PHASE 2: PAPER STRUCTURE ===== -->
+    <div class="section red" id="phase2">
+        <h2><span class="num">2</span> Recommended Paper Structure</h2>
+        <p class="section-sub">A standard IEEE-style structure mapped to your specific project content.</p>
+
+        <div class="code-block">
+<span class="comment">// ---- Paper Structure (mapped to your repo) ----</span>
+
+<span class="section-name">I.   Abstract</span>                          <span class="comment">// 150-250 words, last to write</span>
+<span class="section-name">II.  Introduction</span>                      <span class="comment">// Problem, motivation, contributions</span>
+<span class="section-name">III. Related Work</span>                     <span class="comment">// 15-25 references, gap analysis</span>
+<span class="section-name">IV.  System Design &amp; Architecture</span>     <span class="comment">// YOUR MAIN CONTRIBUTION</span>
+     <span class="keyword">  A.</span> Overall Architecture             <span class="comment">// RPi-centric hub + 2 ESP32 nodes</span>
+     <span class="keyword">  B.</span> Hardware Design                  <span class="comment">// IMU sensors, wiring, DWIN LCD</span>
+     <span class="keyword">  C.</span> Communication Protocol           <span class="comment">// WiFi AP/STA, UDP/TCP streams</span>
+     <span class="keyword">  D.</span> Depth Computation Algorithm       <span class="comment">// Trig-based bucket depth calc</span>
+<span class="section-name">V.   AI-Based Safety Monitoring</span>         <span class="comment">// YOLO detection + person zone alarm</span>
+     <span class="keyword">  A.</span> Object Detection Pipeline         <span class="comment">// YOLOv4-tiny / YOLOv8n on RPi</span>
+     <span class="keyword">  B.</span> Person-Zone Alarm Logic           <span class="comment">// EZVIZ RTSP + danger zones</span>
+     <span class="keyword">  C.</span> Alert Notification System          <span class="comment">// WhatsApp integration</span>
+<span class="section-name">VI.  Implementation &amp; Experiments</span>      <span class="comment">// Setup, results, benchmarks</span>
+     <span class="keyword">  A.</span> Experimental Setup               <span class="comment">// Hardware, environment</span>
+     <span class="keyword">  B.</span> Depth Accuracy Evaluation         <span class="comment">// Measured vs. computed depth</span>
+     <span class="keyword">  C.</span> Detection Performance             <span class="comment">// mAP, inference time, FPS</span>
+     <span class="keyword">  D.</span> System Latency &amp; Reliability     <span class="comment">// End-to-end delay, uptime</span>
+<span class="section-name">VII. Discussion</span>                        <span class="comment">// Limitations, design trade-offs</span>
+<span class="section-name">VIII.Conclusion &amp; Future Work</span>          <span class="comment">// Summary + next steps</span>
+<span class="section-name">IX.  References</span>                        <span class="comment">// 25-40 citations</span>
+        </div>
+    </div>
+
+    <!-- ===== PHASE 3: WRITING EACH SECTION ===== -->
+    <div class="section yellow" id="phase3">
+        <h2><span class="num">3</span> How to Write Each Section</h2>
+        <p class="section-sub">Detailed guidance with specific content mapped to your repository files.</p>
+
+        <!-- Abstract -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Abstract (Write Last)</h3>
+        <p style="color:var(--muted);font-size:0.92em;">
+            A self-contained summary. Follow this formula:
+        </p>
+        <div class="code-block">
+<span class="comment">// Sentence 1: Context + Problem</span>
+Excavation-related accidents remain a leading cause of workplace injuries in
+the construction industry, with limited real-time monitoring solutions available.
+
+<span class="comment">// Sentence 2: What you built</span>
+This paper presents a low-cost, real-time excavation monitoring and worker
+safety system that integrates dual ESP32 microcontroller sensor nodes with
+a Raspberry Pi edge computing hub.
+
+<span class="comment">// Sentence 3: Key methods</span>
+The system continuously computes bucket depth using IMU-derived angular
+data streamed over WiFi, while a YOLO-based computer vision pipeline
+monitors worker proximity to dangerous excavation zones.
+
+<span class="comment">// Sentence 4: Key results (use real numbers from your experiments)</span>
+Experimental evaluation demonstrates depth measurement accuracy within
+&plusmn;2cm at update rates of 10Hz, with person detection achieving 89% mAP
+at 8 FPS on edge hardware.
+
+<span class="comment">// Sentence 5: Impact</span>
+The proposed system provides an affordable, scalable safety solution
+suitable for small-to-medium construction sites.
+        </div>
+
+        <!-- Introduction -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Introduction</h3>
+        <ul class="checklist">
+            <li>
+                <strong>Paragraph 1 &mdash; Problem Statement</strong>
+                <span class="detail">Excavation hazards: cave-ins, struck-by, utility strikes. Cite OSHA/BLS statistics. Emphasize that current solutions are expensive (e.g., Leica, Trimble machine control) and not accessible for small contractors.</span>
+            </li>
+            <li>
+                <strong>Paragraph 2 &mdash; Existing Solutions &amp; Gap</strong>
+                <span class="detail">Briefly mention commercial systems (GNSS-based machine control, laser-guided depth). Explain why they fail for small sites: cost ($50K+), complexity, GPS dependency in urban areas.</span>
+            </li>
+            <li>
+                <strong>Paragraph 3 &mdash; Your Approach</strong>
+                <span class="detail">Introduce your dual-ESP32 + RPi architecture. Highlight: low cost (ESP32 ~$5, RPi ~$35), no GPS dependency, real-time edge computing, integrated AI safety monitoring.</span>
+            </li>
+            <li>
+                <strong>Paragraph 4 &mdash; Contributions</strong>
+                <span class="detail">List 3-4 specific contributions. E.g.:<br>
+                &bull; A low-cost dual-node IMU-based depth estimation system<br>
+                &bull; Real-time WiFi sensor streaming architecture for field deployment<br>
+                &bull; Edge AI person-detection safety monitoring with automated alerts<br>
+                &bull; Open-source integrated platform for construction site safety</span>
+            </li>
+            <li>
+                <strong>Paragraph 5 &mdash; Paper Organization</strong>
+                <span class="detail">"The remainder of this paper is organized as follows..." (1-2 sentences)</span>
+            </li>
+        </ul>
+
+        <!-- Related Work -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Related Work</h3>
+        <ul class="checklist">
+            <li>
+                <strong>Subsection A: IoT for Construction Safety</strong>
+                <span class="detail">Review papers on IoT-based construction site monitoring. Search Google Scholar for: "IoT construction safety monitoring", "smart construction site", "wearable sensors construction". Aim for 8-10 references.</span>
+            </li>
+            <li>
+                <strong>Subsection B: Excavation Monitoring Systems</strong>
+                <span class="detail">Review depth measurement approaches: sonar-based, GNSS-based, IMU-based, laser-based. Search: "excavation depth monitoring", "earthmoving equipment sensing", "machine control system". 5-8 references.</span>
+            </li>
+            <li>
+                <strong>Subsection C: Edge AI for Safety</strong>
+                <span class="detail">Review YOLO-based safety detection in construction. Search: "object detection construction safety", "YOLO worker detection", "edge AI construction". 5-8 references. Highlight the gap: most use cloud-based processing, few do real-time edge inference.</span>
+            </li>
+            <li>
+                <strong>Subsection D: Your Positioning</strong>
+                <span class="detail">1 paragraph summarizing the gap: existing systems either focus on depth OR safety, not both; they use expensive hardware; they lack edge computing. Your system addresses all three.</span>
+            </li>
+        </ul>
+
+        <!-- System Design -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">System Design &amp; Architecture</h3>
+        <p style="color:var(--muted);font-size:0.92em;margin-bottom:12px;">
+            This is your <strong>main contribution section</strong>. Reference your actual source code and hardware.
+        </p>
+        <ul class="checklist">
+            <li>
+                <strong>Architecture Overview</strong>
+                <span class="detail">Describe the RPi-centric architecture (current version). Key files to reference internally: <code>esp32_ap_client/src/main.cpp</code> (ESP32 node), <code>ESP32_IP_Connection/src/main.cpp</code> (IP connection), <code>monitoring_control.py</code> (RPi hub). Include an architecture diagram (see Phase 4).</span>
+            </li>
+            <li>
+                <strong>ESP32 Sensor Nodes</strong>
+                <span class="detail">Describe: IMU sensor for angular measurement, WiFi connection to RPi AP, raw angle streaming over UDP/TCP. Mention the evolution from ESP32-centric to RPi-centric design as a design lesson learned. Include pseudocode of the sensor reading loop.</span>
+            </li>
+            <li>
+                <strong>Communication Protocol</strong>
+                <span class="detail">Describe the WiFi AP/STA setup (<code>ap_sta_setup.py</code>), data format (angle packets), latency considerations. Show a sequence diagram of data flow: ESP32 &rarr; WiFi &rarr; RPi &rarr; Computation &rarr; LCD display.</span>
+            </li>
+            <li>
+                <strong>Depth Computation Algorithm</strong>
+                <span class="detail">Explain the trigonometric computation. Use actual equations. Show how two angles (arm angle + bucket angle) translate to depth. Include the mathematical model with variables defined. This is a key technical contribution.</span>
+            </li>
+            <li>
+                <strong>DWIN LCD Interface</strong>
+                <span class="detail">Briefly describe the DGUS-based LCD for real-time depth display on the excavator. Reference the HMI design images and <code>dwin_lcd.py</code>. Show how operators see live depth readings.</span>
+            </li>
+        </ul>
+
+        <!-- AI Section -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">AI-Based Safety Monitoring</h3>
+        <ul class="checklist">
+            <li>
+                <strong>Object Detection Pipeline</strong>
+                <span class="detail">Describe YOLOv4-tiny / YOLOv8n deployment on RPi. Key files: <code>person_detector.py</code>, <code>model_ncnn.py</code>, <code>yolov8n_ncnn_model/</code>. Report model size, quantization (NCNN), inference time. Include a table: model vs. mAP vs. FPS vs. memory.</span>
+            </li>
+            <li>
+                <strong>Person-Zone Alarm System</strong>
+                <span class="detail">Describe the EZVIZ camera integration, RTSP streaming (<code>rpi_stream.py</code>), danger zone definition, and alarm triggering (<code>rpi_person_zone_alarm.py</code>). Include a diagram of camera FOV + danger zones.</span>
+            </li>
+            <li>
+                <strong>Alert &amp; Notification</strong>
+                <span class="detail">Describe automated WhatsApp alerts with snapshot images (<code>send_alarm.py</code>). Discuss the end-to-end latency from detection to notification. Show example alarm images (from your <code>alarms/</code> folder).</span>
+            </li>
+        </ul>
+
+        <!-- Experiments -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Implementation &amp; Experiments</h3>
+        <div class="warn">
+            <strong>Critical:</strong> This section makes or breaks your paper. You need to <em>run actual experiments</em> and report real numbers. Here's what to measure:
+        </div>
+        <ul class="checklist">
+            <li>
+                <strong>Depth Accuracy</strong>
+                <span class="detail">Place a reference marker at known depths. Compare system readings vs. ground truth. Compute MAE, RMSE, max error. Report for different depths (e.g., 0.5m, 1.0m, 1.5m, 2.0m). Create a table + scatter plot.</span>
+            </li>
+            <li>
+                <strong>Angle Measurement Accuracy</strong>
+                <span class="detail">Calibrate IMU readings against a protractor/level. Report angular error in degrees. Test at different orientations.</span>
+            </li>
+            <li>
+                <strong>System Latency</strong>
+                <span class="detail">Measure: ESP32 sensor read &rarr; WiFi transmit &rarr; RPi compute &rarr; LCD update. Use timestamps or oscilloscope. Report average, P95, P99 latencies.</span>
+            </li>
+            <li>
+                <strong>Detection Performance</strong>
+                <span class="detail">Run YOLO on test images/video from your camera. Compute mAP@0.5, precision, recall. Test at different distances, lighting conditions. Report FPS and inference time per frame.</span>
+            </li>
+            <li>
+                <strong>Network Reliability</strong>
+                <span class="detail">Test WiFi signal strength at different distances (10m, 30m, 50m, 100m). Report packet loss rate, reconnection time. Test with obstacles (typical construction site).</span>
+            </li>
+            <li>
+                <strong>Power Consumption</strong>
+                <span class="detail">Measure ESP32 current draw. Estimate battery life for portable deployment. Compare with power consumption of commercial alternatives.</span>
+            </li>
+            <li>
+                <strong>Cost Analysis</strong>
+                <span class="detail">Bill of materials: 2x ESP32 ($10), RPi 4 ($35), IMU sensors ($8), DWIN LCD ($25), EZVIZ camera ($40), RFID reader ($5), misc ($20). Total ~$143. Compare with commercial systems ($50K+).</span>
+            </li>
+        </ul>
+
+        <!-- Discussion -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Discussion</h3>
+        <ul class="checklist">
+            <li>
+                <strong>Design Trade-offs</strong>
+                <span class="detail">Why RPi-centric over ESP32-centric? (Computational power, ML framework support, easier development). Trade-off: higher cost, more power consumption, less rugged.</span>
+            </li>
+            <li>
+                <strong>Limitations</strong>
+                <span class="detail">Be honest: WiFi range limitation in construction sites, RPi not ruggedized, YOLOv4-tiny accuracy vs. larger models, no GNSS integration, calibration requirements.</span>
+            </li>
+            <li>
+                <strong>Scalability</strong>
+                <span class="detail">Could this scale to multiple excavators? Multiple cameras? Cloud dashboard? Discuss what would be needed.</span>
+            </li>
+        </ul>
+
+        <!-- Conclusion -->
+        <h3 style="color:var(--accent);margin:20px 0 8px;">Conclusion &amp; Future Work</h3>
+        <ul class="checklist">
+            <li>Summarize contributions in 3-4 sentences (mirror the Introduction)</li>
+            <li>Restate key experimental results</li>
+            <li>Future work: GNSS integration, 5G connectivity, larger YOLO models, cloud dashboard, multi-machine coordination, fatigue detection via face analysis</li>
+        </ul>
+    </div>
+
+    <!-- ===== PHASE 4: FIGURES ===== -->
+    <div class="section green" id="phase4">
+        <h2><span class="num">4</span> Required Figures &amp; Diagrams</h2>
+        <p class="section-sub">Visuals are critical. A good paper has 6-10 figures. Here's what to create.</p>
+
+        <div class="grid-2">
+            <div class="card-mini">
+                <span class="icon">&#128208;</span>
+                <h4>Fig. 1: System Architecture</h4>
+                <p>Show the full system: 2 ESP32 nodes &rarr; WiFi &rarr; RPi Hub &rarr; LCD + Camera + Dashboard + WhatsApp. Use Draw.io or TikZ. This is your <strong>most important figure</strong>.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128207;</span>
+                <h4>Fig. 2: Physical Setup</h4>
+                <p>Photo of the actual hardware setup on an excavator arm or test rig. Show ESP32 mounting, IMU placement, LCD on the cab. A real photo is worth more than a diagram.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128200;</span>
+                <h4>Fig. 3: Depth Computation Model</h4>
+                <p>Geometric diagram showing excavator arm angles, trigonometric relationships, and how depth is derived. Label all variables used in your equations.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128202;</span>
+                <h4>Fig. 4: Depth Accuracy Results</h4>
+                <p>Scatter plot: computed depth vs. ground truth. Include regression line and R&sup2; value. Or bar chart of error at different depths.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128065;</span>
+                <h4>Fig. 5: Detection Pipeline</h4>
+                <p>Diagram: Camera &rarr; RTSP Stream &rarr; Frame Grab &rarr; YOLO Inference &rarr; Bounding Boxes &rarr; Zone Check &rarr; Alarm. Show with example output image.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128247;</span>
+                <h4>Fig. 6: Detection Examples</h4>
+                <p>Sample output images showing person detection with bounding boxes in danger zones. Include true positive and edge cases. From your <code>alarms/</code> directory.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128337;</span>
+                <h4>Fig. 7: Sequence / Timing Diagram</h4>
+                <p>Data flow timeline: ESP32 reads sensor &rarr; packets sent &rarr; RPi receives &rarr; computes &rarr; sends to LCD. Show actual measured timestamps.</p>
+            </div>
+            <div class="card-mini">
+                <span class="icon">&#128176;</span>
+                <h4>Fig. 8: Cost Comparison</h4>
+                <p>Bar chart comparing your system cost (~$143) vs. commercial alternatives ($50K-$200K). Dramatic visual impact for reviewers.</p>
+            </div>
+        </div>
+
+        <div class="tip">
+            <strong>Tools for figures:</strong> Use Draw.io / diagrams.net for architecture diagrams, Python matplotlib for data plots, TikZ for LaTeX papers, Inkscape for vector graphics. For photos, use a clean background and add labels/arrows.
+        </div>
+    </div>
+
+    <!-- ===== PHASE 5: FORMATTING ===== -->
+    <div class="section red" id="phase5">
+        <h2><span class="num">5</span> Formatting &amp; Submission</h2>
+        <p class="section-sub">Technical details that affect acceptance.</p>
+
+        <div class="grid-2">
+            <div class="card-mini">
+                <h4>LaTeX Setup</h4>
+                <p>
+                    Download the IEEE template from <strong>overleaf.com</strong> (search "IEEE Journal" or "IEEE Conference"). Use <code>IEEEtran.cls</code>. Set column layout, fonts, and margins per conference specs. Most conferences provide their own template &mdash; always use the official one.
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Citation Management</h4>
+                <p>
+                    Use <strong>Zotero</strong> or <strong>Mendeley</strong> to manage references. Export as <code>.bib</code> file. Use <code>\cite{author2024}</code> format. IEEE uses numbered citations [1], [2]. Aim for 25-40 references; at least 60% from last 5 years.
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Common Rejection Reasons</h4>
+                <p>
+                    &#10003; Weak experimental validation<br>
+                    &#10003; Insufficient comparison with prior work<br>
+                    &#10003; Poor figures / hard to read<br>
+                    &#10003; Grammar / language issues<br>
+                    &#10003; Missing limitations discussion
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Submission Checklist</h4>
+                <p>
+                    &#9744; PDF meets page limit<br>
+                    &#9744; All figures are high-res (300 DPI+)<br>
+                    &#9744; References are complete<br>
+                    &#9744; Author names anonymized (if blind review)<br>
+                    &#9744; Supplementary materials ready (code repo)
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== PHASE 6: TIMELINE ===== -->
+    <div class="section yellow" id="phase6">
+        <h2><span class="num">6</span> Writing Timeline (8 Weeks)</h2>
+        <p class="section-sub">A realistic schedule from start to submission. Adjust based on your conference deadline.</p>
+
+        <div class="timeline">
+            <div class="timeline-item done">
+                <span class="week">Week 1 &mdash; Preparation</span>
+                <h4>Research &amp; Setup</h4>
+                <p>Select target conference. Download template. Read 5 recent papers. Set up Overleaf/LaTeX project. Begin literature search (Google Scholar, IEEE Xplore). Create a shared BibTeX file.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 2 &mdash; Experiments</span>
+                <h4>Run All Benchmarks</h4>
+                <p>Execute depth accuracy tests, run YOLO on test footage, measure latency, document network performance, photograph hardware setup. Collect all raw data and create initial plots.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 3 &mdash; First Draft</span>
+                <h4>Write Sections IV &amp; V (System Design + AI)</h4>
+                <p>Write the core technical sections first. These are the heart of your paper. Include equations, pseudocode, and reference your figures. These sections will be 40% of your paper.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 4 &mdash; Extended Draft</span>
+                <h4>Write Sections III &amp; VI (Related Work + Experiments)</h4>
+                <p>Write related work with proper citations. Write experiments section with all tables, figures, and analysis. Ensure every claim has experimental backing.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 5 &mdash; Complete Draft</span>
+                <h4>Write Introduction, Conclusion, Abstract</h4>
+                <p>Write introduction (set up the problem, state contributions). Write conclusion. Write abstract last. Add discussion section with limitations. First complete draft should be ready.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 6 &mdash; Review &amp; Polish</span>
+                <h4>Internal Review</h4>
+                <p>Read the entire paper aloud. Fix grammar (use Grammarly). Verify all figures are clear and labeled. Check equation numbering. Ensure consistent notation. Ask a colleague to review.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 7 &mdash; Finalize</span>
+                <h4>Incorporate Feedback &amp; Final Edits</h4>
+                <p>Address all reviewer comments from internal review. Finalize figures. Format references perfectly. Prepare supplementary materials (code, dataset). Create a brief demo video if allowed.</p>
+            </div>
+            <div class="timeline-item">
+                <span class="week">Week 8 &mdash; Submission</span>
+                <h4>Final Check &amp; Submit</h4>
+                <p>Final PDF check (page limits, margins, file size). Double-check author information. Submit 2-3 days before deadline. Do NOT submit on the last day &mdash; servers crash.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== PHASE 7: OUTLINE TEMPLATE ===== -->
+    <div class="section purple" id="phase7">
+        <h2><span class="num">7</span> Paper Outline Template (Copy-Paste Ready)</h2>
+        <p class="section-sub">A concrete LaTeX-style outline with specific content for each section.</p>
+
+        <div class="code-block">
+<span class="keyword">\title{</span>Low-Cost Real-Time Excavation Monitoring and Worker Safety System
+       Using Dual ESP32 Sensor Nodes and Edge AI on Raspberry Pi<span class="keyword">}</span>
+
+<span class="section-name">Abstract</span>
+[150-250 words. Write this LAST. Follow the formula from Phase 3.]
+
+<span class="section-name">I. Introduction</span>
+  <span class="keyword">1.1</span> Background: Excavation accidents in construction
+       &mdash; OSHA statistics: ~200 fatalities/year in construction (US)
+       &mdash; ~25% are excavation-related
+  <span class="keyword">1.2</span> Existing solutions and their limitations
+       &mdash; Commercial GNSS systems: too expensive ($50K+)
+       &mdash; Manual monitoring: error-prone, unsafe
+  <span class="keyword">1.3</span> Proposed system overview (1 paragraph)
+       &mdash; Dual ESP32 + RPi architecture
+       &mdash; IMU-based depth computation
+       &mdash; YOLO-based person detection
+  <span class="keyword">1.4</span> Contributions (numbered list, 3-4 items)
+  <span class="keyword">1.5</span> Paper organization
+
+<span class="section-name">II. Related Work</span>
+  <span class="keyword">2.1</span> IoT in Construction Safety [8-10 refs]
+  <span class="keyword">2.2</span> Excavation Monitoring Systems [5-8 refs]
+  <span class="keyword">2.3</span> Edge AI for Industrial Safety [5-8 refs]
+  <span class="keyword">2.4</span> Summary and research gap
+
+<span class="section-name">III. System Architecture</span>
+  <span class="keyword">3.1</span> Overview of proposed architecture
+       &mdash; [Fig. 1: Architecture diagram]
+  <span class="keyword">3.2</span> Hardware components
+       &mdash; ESP32 modules (2x): WiFi, IMU sensors
+       &mdash; Raspberry Pi 4: central hub
+       &mdash; DWIN LCD: operator display
+       &mdash; EZVIZ IP camera: visual monitoring
+       &mdash; RFID reader: access control
+       &mdash; [Table I: Bill of Materials]
+  <span class="keyword">3.3</span> Communication protocol
+       &mdash; WiFi AP/STA dual-mode
+       &mdash; UDP sensor streaming
+       &mdash; [Fig. 2: Sequence diagram]
+  <span class="keyword">3.4</span> Depth computation algorithm
+       &mdash; Mathematical model with equations
+       &mdash; [Fig. 3: Geometric model]
+       &mdash; [Algorithm 1: Depth Calculation Pseudocode]
+
+<span class="section-name">IV. AI-Based Safety Monitoring</span>
+  <span class="keyword">4.1</span> Object detection pipeline
+       &mdash; YOLOv4-tiny / YOLOv8n on RPi
+       &mdash; NCNN optimization
+       &mdash; [Table II: Model comparison]
+  <span class="keyword">4.2</span> Person-zone danger detection
+       &mdash; Camera FOV calibration
+       &mdash; Virtual danger zone definition
+       &mdash; [Fig. 4: Detection pipeline + examples]
+  <span class="keyword">4.3</span> Automated alert system
+       &mdash; WhatsApp notification with snapshots
+       &mdash; End-to-end latency breakdown
+
+<span class="section-name">V. Experimental Evaluation</span>
+  <span class="keyword">5.1</span> Experimental setup
+       &mdash; Test environment description
+       &mdash; [Fig. 5: Photo of test setup]
+  <span class="keyword">5.2</span> Depth measurement accuracy
+       &mdash; [Table III: Accuracy at different depths]
+       &mdash; [Fig. 6: Computed vs. ground truth scatter plot]
+       &mdash; MAE, RMSE, R&sup2; values
+  <span class="keyword">5.3</span> System latency analysis
+       &mdash; [Table IV: Latency breakdown]
+       &mdash; [Fig. 7: Latency distribution]
+  <span class="keyword">5.4</span> Detection performance
+       &mdash; [Table V: mAP, precision, recall, FPS]
+       &mdash; [Fig. 8: Detection examples]
+  <span class="keyword">5.5</span> Network reliability
+       &mdash; Packet loss at various distances
+       &mdash; Reconnection performance
+  <span class="keyword">5.6</span> Cost comparison
+       &mdash; [Fig. 9: Cost bar chart vs. alternatives]
+
+<span class="section-name">VI. Discussion</span>
+  <span class="keyword">6.1</span> Design rationale and trade-offs
+  <span class="keyword">6.2</span> Limitations
+       &mdash; WiFi range constraints
+       &mdash; Environmental factors (dust, weather)
+       &mdash; Calibration requirements
+  <span class="keyword">6.3</span> Scalability analysis
+
+<span class="section-name">VII. Conclusion &amp; Future Work</span>
+  <span class="keyword">7.1</span> Summary of contributions
+  <span class="keyword">7.2</span> Future directions
+       &mdash; GNSS integration for outdoor autonomy
+       &mdash; 5G/LoRa for extended range
+       &mdash; Larger YOLO models with GPU acceleration
+       &mdash; Multi-excavator coordination
+       &mdash; Cloud-based fleet management dashboard
+
+<span class="section-name">References</span>
+[25-40 entries. Use IEEE numbered format [1], [2], ...]
+        </div>
+
+        <div class="tip" style="margin-top: 20px;">
+            <strong>Pro tip for your specific project:</strong> The most compelling narrative is the <em>architecture evolution story</em>. You started with ESP32 as the compute hub, then migrated to RPi. Explain WHY and WHAT you learned. Reviewers love design study insights &mdash; it shows engineering maturity, not just coding.
+        </div>
+    </div>
+
+    <!-- ===== BONUS: KEYWORDS ===== -->
+    <div class="section green">
+        <h2><span class="num">+</span> Suggested Keywords for Submission</h2>
+        <p class="section-sub">Choose 4-6 from this list when submitting your paper.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+            <span class="badge">Internet of Things</span>
+            <span class="badge green">Edge Computing</span>
+            <span class="badge red">Object Detection</span>
+            <span class="badge yellow">Construction Safety</span>
+            <span class="badge">ESP32</span>
+            <span class="badge green">Raspberry Pi</span>
+            <span class="badge red">Real-Time Monitoring</span>
+            <span class="badge yellow">IMU Sensors</span>
+            <span class="badge">YOLO</span>
+            <span class="badge green">Embedded Systems</span>
+            <span class="badge red">Worker Safety</span>
+            <span class="badge yellow">Excavation Monitoring</span>
+        </div>
+    </div>
+
+    <!-- ===== RESOURCES ===== -->
+    <div class="section red">
+        <h2><span class="num">#</span> Useful Resources</h2>
+        <div class="grid-3">
+            <div class="card-mini">
+                <h4>Writing</h4>
+                <p>
+                    &bull; "How to Write a Paper" &mdash; Mike Ashby<br>
+                    &bull; Overleaf IEEE templates<br>
+                    &bull; Grammarly (grammar check)<br>
+                    &bull; Writefull (academic writing AI)
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Research</h4>
+                <p>
+                    &bull; Google Scholar<br>
+                    &bull; IEEE Xplore Digital Library<br>
+                    &bull; Semantic Scholar (AI-powered)<br>
+                    &bull; Connected Papers (related work)
+                </p>
+            </div>
+            <div class="card-mini">
+                <h4>Figures &amp; Plots</h4>
+                <p>
+                    &bull; Draw.io / diagrams.net<br>
+                    &bull; Matplotlib / Seaborn (Python)<br>
+                    &bull; TikZ (LaTeX diagrams)<br>
+                    &bull; Inkscape (vector editing)
+                </p>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div class="footer">
+    Generated for the ESP32 + Raspberry Pi Excavation Monitoring Project<br>
+    Repository: <code>ESP_Advanced_Project</code> &nbsp;|&nbsp; Last explored: July 2026
+</div>
+
+</body>
+</html>

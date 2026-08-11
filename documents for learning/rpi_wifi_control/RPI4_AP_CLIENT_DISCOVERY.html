@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Who is on my AP? — listing, naming and finding devices on the Pi's access point</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow-x:hidden}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 90px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--dim);font-size:17px;margin:0 0 26px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:16px;border-top:1px solid var(--line);
+     letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px;letter-spacing:.01em}
+  h4{font-size:14px;margin:20px 0 6px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.06em}
+  h4.mode{font-size:16.5px;color:var(--fg);text-transform:none;letter-spacing:-.005em;
+    font-weight:700;margin:32px 0 8px;padding-top:14px;border-top:1px dashed var(--line)}
+  h4.mode code{font-size:.85em;text-transform:none;letter-spacing:0}
+  h2 .num{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:var(--code);color:var(--codefg);padding:1px 5px;border-radius:4px}
+  pre{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:14px 0}
+  pre code{background:none;padding:0;font-size:inherit}
+  pre.out{background:transparent;border-style:dashed;color:var(--dim)}
+  .box{position:relative}
+  .box>button{position:absolute;top:7px;right:7px;font:600 11px/1 inherit;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--dim);background:var(--kbd);
+    border:1px solid var(--line);border-radius:5px;padding:5px 8px;cursor:pointer;opacity:.5;
+    transition:opacity .15s}
+  .box:hover>button{opacity:1}
+  .box>button:hover{color:var(--acc);border-color:var(--acc)}
+  .box>button.done{color:var(--ok);border-color:var(--ok)}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    font-weight:700;white-space:nowrap}
+  tbody tr:hover{background:var(--card)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin:16px 0}
+  .note,.warn,.ok,.bad{border-left:4px solid;border-radius:8px;padding:12px 15px;margin:16px 0}
+  .note{border-color:var(--acc);background:var(--acc-bg)}
+  .warn{border-color:var(--warn);background:var(--warn-bg)}
+  .ok{border-color:var(--ok);background:var(--ok-bg)}
+  .bad{border-color:var(--bad);background:var(--bad-bg)}
+  .y{color:var(--ok);font-weight:700}
+  .n{color:var(--bad);font-weight:700}
+  .m{color:var(--warn);font-weight:700}
+  ol,ul{margin:10px 0;padding-left:24px}
+  li{margin:6px 0}
+  kbd{background:var(--kbd);border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:inherit;font-weight:600}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;column-gap:28px}
+  @media (max-width:620px){.toc ol{columns:1}}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+  a{color:var(--acc)}
+  .small{font-size:13.5px;color:var(--dim)}
+  .ascii{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.45;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:16px 0}
+  .q{font-size:15px;color:var(--dim);font-style:italic;margin:0 0 14px;
+     padding-left:12px;border-left:3px solid var(--line)}
+  .fname{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.03em;color:var(--dim);margin:18px 0 -8px;display:block}
+  .lbl{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--dim);margin:14px 0 -8px;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Who is on my AP? — listing, naming and finding devices</h1>
+<p class="lede">The Pi's access point is up and things are joining it. This is how to see them
+all with IP, MAC, vendor and name — and how to answer the hard version of the question:
+<i>which of these IPs is my camera?</i></p>
+
+<p class="q">"Can I scan all the connected devices to my AP with IP and name? I connected an IP
+cam whose name is H8c-**** and I want to know which IP is that device."</p>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#tools">The three tools</a></li>
+    <li><a href="#install">Install them on the Pi</a></li>
+    <li><a href="#quick">Quick start</a></li>
+    <li><a href="#names">Why "name" is the hard part</a></li>
+    <li><a href="#modes"><code>ap-clients.sh</code> — every mode</a></li>
+    <li><a href="#recipe">Find your camera — the reliable recipe</a></li>
+    <li><a href="#alias">The alias file</a></li>
+    <li><a href="#pin">Pin a device to a fixed IP</a></li>
+    <li><a href="#onvif"><code>onvif-find.py</code></a></li>
+    <li><a href="#code">Use it from your own code</a></li>
+    <li><a href="#deps">Dependencies</a></li>
+    <li><a href="#trouble">Troubleshooting the tools</a></li>
+  </ol>
+</div>
+
+<h2 id="tools"><span class="num">1</span>The three tools</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>File</th><th>Answers</th><th>Reach for it when</th></tr></thead>
+  <tbody>
+    <tr><td><code>ap-clients.sh</code></td>
+        <td>Who is on the AP, and what IP does <i>this</i> device have?</td>
+        <td>Everyday. This is the one you will use</td></tr>
+    <tr><td><code>onvif-find.py</code></td>
+        <td>What do the cameras call themselves?</td>
+        <td>You need a camera's <b>own advertised name</b>, not just its MAC</td></tr>
+    <tr><td><code>apsta-doctor.sh</code></td>
+        <td>Why can nothing join the AP at all?</td>
+        <td>The list is empty, or a device refuses to connect</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>ap-clients.sh</code> invents nothing. It joins four sources the kernel and the DHCP
+server already maintain:</p>
+
+<div class="ascii">  iw dev uap0 station dump  ──▶  MAC, signal, connected time   (802.11 associations)
+  DHCP lease file           ──▶  MAC, IP, hostname the client asked for
+  ip neigh show dev uap0    ──▶  IP ⇄ MAC, including static-IP devices with no lease
+  IEEE OUI table (offline)  ──▶  vendor: "Hangzhou XiongMai", "Espressif", ...
+                                 │
+                                 ▼
+                    one table, keyed by MAC</div>
+
+<h2 id="install"><span class="num">2</span>Install them on the Pi</h2>
+
+<div class="lbl">from Windows / PowerShell</div>
+<div class="box"><button>copy</button><pre><code>$src = "C:\Users\Asus\Documents\GitHub\ESP_Advanced_Project\documents for learning\rpi_wifi_control"
+scp "$src\ap-clients.sh" "$src\onvif-find.py" "$src\apsta-doctor.sh" pi@raspberrypi.local:~/</code></pre></div>
+
+<div class="lbl">on the Pi — put them on PATH so you can just type the name</div>
+<div class="box"><button>copy</button><pre><code>sudo install -m 755 ~/ap-clients.sh    /usr/local/sbin/ap-clients
+sudo install -m 755 ~/onvif-find.py    /usr/local/sbin/onvif-find.py
+sudo install -m 755 ~/apsta-doctor.sh  /usr/local/sbin/apsta-doctor
+
+sudo ap-clients --help</code></pre></div>
+
+<div class="warn">
+<b>Keep the <code>.py</code> on the ONVIF one.</b> <code>ap-clients</code> finds it by looking
+for a file literally called <code>onvif-find.py</code> next to itself. Install it as
+<code>onvif-find</code> and the <code>--onvif</code> flag silently stops working (it prints a
+note to stderr and carries on without ONVIF names).
+</div>
+
+<p class="small">The rest of this page writes <code>sudo ap-clients …</code>. If you skipped the
+install step, use <code>sudo bash ~/ap-clients.sh …</code> instead — identical.</p>
+
+<h2 id="quick"><span class="num">3</span>Quick start</h2>
+
+<div class="box"><button>copy</button><pre><code>sudo ap-clients                       # the table: IP, MAC, vendor, name, signal, uptime
+sudo ap-clients --ip H8c              # just the IP of whatever matches "H8c"
+sudo ap-clients --find                # power-cycle a device, learn exactly which IP it is
+sudo ap-clients --alias 192.168.50.42 gate-cam     # label it, once, forever</code></pre></div>
+
+<div class="lbl">what the table looks like</div>
+<pre class="out"><code>IP               MAC                VENDOR                   NAME             SIGNAL     UP(s)
+----------------------------------------------------------------------------------------------------
+192.168.50.42    12:34:56:78:9a:bc  Hangzhou XiongMai Tech   gate-cam            -52      8100
+192.168.50.51    aa:bb:cc:00:00:01  Espressif Inc.           esp32-stick         -40      4210
+192.168.50.52    aa:bb:cc:00:00:02  Espressif Inc.           esp32-beam          -45      4180
+----------------------------------------------------------------------------------------------------
+3 device(s) on uap0 (192.168.50.1/24)   leases: /var/lib/NetworkManager/dnsmasq-uap0.leases
+NAME = your alias &gt; ONVIF name (--onvif) &gt; DHCP hostname.  Label one: --alias &lt;ip&gt; &lt;name&gt;</code></pre>
+
+<h2 id="names"><span class="num">4</span>Why "name" is the hard part</h2>
+
+<p>Finding IPs and MACs is easy — the kernel hands them over. Getting a <b>name</b> is where it
+gets interesting, because there is no single thing called "the device's name". There are four
+different names, and a cheap IP camera may broadcast none of them.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Kind of name</th><th>Where it lives</th><th>Does a cheap IP cam send it?</th></tr></thead>
+  <tbody>
+    <tr><td><b>The label on the box</b> — e.g. <code>H8c-****</code></td>
+        <td>Printed on the device. Usually its SoftAP SSID / cloud UID</td>
+        <td class="n">Not sent over the LAN at all</td></tr>
+    <tr><td><b>DHCP hostname</b> (option 12)</td>
+        <td>The lease file, once it asks for an address</td>
+        <td class="m">Often blank, or something useless like <code>IPC</code></td></tr>
+    <tr><td><b>mDNS / Bonjour</b></td><td><code>avahi-browse -art</code></td>
+        <td class="n">Rarely</td></tr>
+    <tr><td><b>ONVIF scopes</b></td><td>WS-Discovery reply, UDP 3702</td>
+        <td class="y">Usually — and it often <i>is</i> the box label</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+<b>This is the key insight for the <code>H8c-****</code> question.</b> That string is on the
+sticker, not on the wire — so grepping the DHCP leases for "H8c" will usually find nothing. The
+two things that <i>do</i> work: ask the camera over ONVIF (<code>--onvif</code>), or identify it
+physically once with <code>--find</code> and then write the name down yourself with
+<code>--alias</code>. After that, every lookup is exact and needs neither.
+</div>
+
+<p>So <code>--ip</code> matches your pattern against five sources, most trustworthy first:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>#</th><th>Source</th><th>Trust</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Your alias in <code>/etc/rpi-ap-sta-hosts</code></td><td class="y">You set it. It never lies</td></tr>
+    <tr><td>2</td><td>ONVIF advertised name (only with <code>--onvif</code>)</td><td class="y">The device's own idea of its name</td></tr>
+    <tr><td>3</td><td>DHCP hostname the device asked for</td><td class="m">Absent on much cheap gear</td></tr>
+    <tr><td>4</td><td>IEEE OUI vendor string</td><td class="m">Identifies the chipset maker, not the device</td></tr>
+    <tr><td>5</td><td>The MAC or the IP itself</td><td class="y">Exact, but you have to know it</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>*</code> in the pattern is a wildcard; anything else is a plain case-insensitive
+substring. Both of these work, and the shorter one is usually the better bet:</p>
+
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --ip H8c            # substring -- matches H8c-A1B2C3
+sudo ap-clients --ip 'H8c-*'        # wildcard  -- same result
+sudo ap-clients --ip xiongmai       # by vendor, when the device has no name at all
+sudo ap-clients --ip 12:34:56       # by MAC prefix</code></pre></div>
+
+<h2 id="modes"><span class="num">5</span><code>ap-clients.sh</code> — every mode</h2>
+
+<h4 class="mode" id="m-table">default — the table</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients
+sudo ap-clients --onvif        # + ask the cameras their names (adds ~5s)</code></pre></div>
+<p>Warms the ARP table first (so silent devices appear), then joins all four sources. The
+<code>NAME</code> column shows the best available name using the ladder above.</p>
+
+<h4 class="mode" id="m-ip"><code>--ip PATTERN</code> — print only the IP</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --ip H8c
+sudo ap-clients --ip 'H8c-*' --onvif</code></pre></div>
+<pre class="out"><code>192.168.50.42</code></pre>
+<p>Bare IPs, one per line, nothing else — so it pipes and substitutes cleanly. Exit status is
+<b>0 if something matched, 1 if not</b>, which is what makes this safe in a script:</p>
+<div class="box"><button>copy</button><pre><code>if CAM=$(sudo ap-clients --ip gate-cam); then
+    ffplay -rtsp_transport tcp "rtsp://user:pass@$CAM:554/"
+else
+    echo "camera is not on the AP right now"
+fi</code></pre></div>
+<p class="small">If several devices match, you get several lines. Narrow the pattern, or take
+the first with <code>| head -1</code>.</p>
+
+<h4 class="mode" id="m-show"><code>--show PATTERN</code> — the matching rows</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --show esp32</code></pre></div>
+<pre class="out"><code>IP               MAC                VENDOR                   NAME                SIGNAL
+192.168.50.51    aa:bb:cc:00:00:01  Espressif Inc.           esp32-stick            -40
+192.168.50.52    aa:bb:cc:00:00:02  Espressif Inc.           esp32-beam             -45</code></pre>
+<p>Same matching as <code>--ip</code>, but human-readable. Use it to confirm you matched the
+right thing before wiring <code>--ip</code> into a script.</p>
+
+<h4 class="mode" id="m-find"><code>--find</code> — the only certain method</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --find</code></pre></div>
+<pre class="out"><code>Baseline -- every device currently on uap0:
+    12:34:56:78:9a:bc 192.168.50.42
+    aa:bb:cc:00:00:01 192.168.50.51
+
+Now power-cycle ONLY the device you are looking for -- unplug the camera, count
+to five, plug it back in. Do not touch anything else on the network.
+
+Watching for up to 180s. Ctrl-C to stop.
+..
+&gt;&gt;&gt; LEFT the network (this is your device powering down):
+    MAC 12:34:56:78:9a:bc   IP 192.168.50.42   vendor Hangzhou XiongMai Tech
+.....
+&gt;&gt;&gt; JOINED the network (this is your device coming back):
+    MAC 12:34:56:78:9a:bc   IP 192.168.50.42   vendor Hangzhou XiongMai Tech   dhcp-name -
+
+That IP belongs to the device you just power-cycled. Certain, not inferred.</code></pre>
+<div class="ok"><b>Use this once per device, then never again.</b> Names and vendor strings can
+be missing or misleading; a device that physically left the network when you unplugged it cannot
+be anything else. It also prints the exact <code>dhcp-host=</code> line to give that MAC a
+permanent IP — see <a href="#pin">§8</a>.</div>
+
+<h4 class="mode" id="m-alias"><code>--alias &lt;mac|ip&gt; &lt;name&gt;</code> — write the name down</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --alias 192.168.50.42 gate-cam        # by current IP
+sudo ap-clients --alias 12:34:56:78:9a:bc gate-cam    # or by MAC, which never changes</code></pre></div>
+<pre class="out"><code>added: 12:34:56:78:9a:bc -&gt; gate-cam
+/etc/rpi-ap-sta-hosts now:
+    # MAC                friendly-name
+    12:34:56:78:9a:bc  gate-cam
+
+From now on:  sudo bash /usr/local/sbin/ap-clients --ip gate-cam</code></pre>
+<p>Re-running with the same MAC <b>updates</b> the name rather than adding a duplicate. Passing
+an IP that is not currently on the AP fails with a clear message rather than writing a wrong
+entry.</p>
+
+<h4 class="mode" id="m-ports"><code>--ports</code> — what is this thing?</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --ports</code></pre></div>
+<pre class="out"><code>service probe (80 443 554 8000 8080 8081 8554 8899 9000 22 23 37777 34567 62078)
+IP               MAC                OPEN PORTS                         LIKELY
+192.168.50.42    12:34:56:78:9a:bc   80 554 34567                      IP CAMERA (RTSP)
+192.168.50.51    aa:bb:cc:00:00:01   80                                has a web UI
+
+RTSP on 554 is the strongest camera signal.</code></pre>
+<div class="scroll">
+<table>
+  <thead><tr><th>Open port</th><th>Usually means</th></tr></thead>
+  <tbody>
+    <tr><td><code>554</code></td><td><b>RTSP — the strongest IP-camera signal there is</b></td></tr>
+    <tr><td><code>34567</code>, <code>37777</code>, <code>8899</code></td><td>XiongMai / Dahua-style camera or DVR protocol</td></tr>
+    <tr><td><code>8000</code></td><td>Hikvision SDK port</td></tr>
+    <tr><td><code>80</code>, <code>8080</code></td><td>A web UI — most cameras have one</td></tr>
+    <tr><td><code>62078</code></td><td>An iPhone or iPad</td></tr>
+    <tr><td><code>22</code></td><td>A Linux host — probably not your camera</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="small">This is <i>inference</i>. It is good at "that is a camera" and bad at "that is
+<i>your</i> camera" — use it to shortlist, then confirm with <code>--find</code>.</p>
+
+<h4 class="mode" id="m-json"><code>--json</code> — for code, not eyes</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --json</code></pre></div>
+<pre class="out"><code>[
+  {"ip":"192.168.50.42","mac":"12:34:56:78:9a:bc","vendor":"Hangzhou XiongMai Tech",
+   "name":"gate-cam","dhcp_name":"","alias":"gate-cam","onvif":"",
+   "signal_dbm":"-52","uptime_s":"8100"},
+  {"ip":"192.168.50.51","mac":"aa:bb:cc:00:00:01","vendor":"Espressif Inc.",
+   "name":"esp32-stick","dhcp_name":"esp32-stick","alias":"","onvif":"",
+   "signal_dbm":"-40","uptime_s":"4210"}
+]</code></pre>
+<p class="small">Every field is a string, including the numbers — cast on your side. All values
+are JSON-escaped: a device that names itself <code>ev"il\x</code> cannot corrupt the document,
+which matters because the DHCP hostname is chosen by the client, not by you.</p>
+
+<h4 class="mode" id="m-watch"><code>--watch</code> — live</h4>
+<div class="box"><button>copy</button><pre><code>sudo ap-clients --watch      # re-prints every 3s; Ctrl-C to stop</code></pre></div>
+<p>Useful while walking a device around to check signal, or watching an ESP32 reconnect after a
+reset.</p>
+
+<h2 id="recipe"><span class="num">6</span>Find your camera — the reliable recipe</h2>
+
+<p>Three commands, once. After this the camera has a stable name <i>and</i> a stable IP, and you
+never do detective work again.</p>
+
+<div class="box"><button>copy</button><pre><code># 1. Try the easy way first -- ask the cameras their own names.
+sudo ap-clients --show H8c --onvif
+
+# 2. Nothing? Identify it physically. Unplug the camera when prompted, plug it back in.
+sudo ap-clients --find
+
+# 3. Write the name down against the MAC it reported.
+sudo ap-clients --alias 12:34:56:78:9a:bc H8c-cam
+
+# From now on, this is exact and instant -- no ONVIF, no guessing:
+sudo ap-clients --ip H8c-cam</code></pre></div>
+
+<div class="ascii">  --onvif        camera answers with its own name?  ──▶ done, you have the IP
+      │ no
+      ▼
+  --find         unplug / replug, watch what leaves and returns
+      │
+      ▼
+  --alias        record MAC → name in /etc/rpi-ap-sta-hosts
+      │
+      ▼
+  --ip name      exact forever · survives reboots · survives a new DHCP lease
+      │
+      ▼
+  dhcp-host=     (optional, §8) same MAC always gets the same IP</div>
+
+<h2 id="alias"><span class="num">7</span>The alias file</h2>
+
+<p><code>/etc/rpi-ap-sta-hosts</code>. One device per line: MAC, whitespace, name. Anything after
+<code>#</code> is a comment. <code>--alias</code> maintains it, but editing by hand is fine and
+often faster for several devices at once.</p>
+
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/rpi-ap-sta-hosts &gt;/dev/null &lt;&lt;'EOF'
+# MAC                friendly-name     # notes
+12:34:56:78:9a:bc    H8c-cam           # IP camera, gate post, RTSP on 554
+aa:bb:cc:00:00:01    esp32-stick       # angle sensor, stick
+aa:bb:cc:00:00:02    esp32-beam        # angle sensor, beam
+EOF
+sudo ap-clients                        # NAME column now shows your labels</code></pre></div>
+
+<div class="note"><b>Key by MAC, not IP.</b> A DHCP lease can change; a MAC will not. That is why
+<code>--alias</code> resolves an IP to its MAC before writing, and stores the MAC.</div>
+
+<p class="small">One caveat worth knowing: modern phones randomise their MAC per network for
+privacy, so a phone's MAC <i>can</i> change and an alias for it will go stale. The vendor column
+shows <code>(randomised MAC)</code> when it spots one. Cameras and ESP32s never do this.</p>
+
+<h2 id="pin"><span class="num">8</span>Pin a device to a fixed IP</h2>
+
+<p>Naming solves lookup. If you would rather the camera simply <i>always</i> be at the same
+address — so you can hard-code it in firmware or a config file — give it a DHCP reservation.
+NetworkManager reads extra dnsmasq settings for shared connections from
+<code>/etc/NetworkManager/dnsmasq-shared.d/</code>.</p>
+
+<div class="box"><button>copy</button><pre><code>sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+echo 'dhcp-host=12:34:56:78:9a:bc,192.168.50.90,ipcam' \
+  | sudo tee /etc/NetworkManager/dnsmasq-shared.d/ipcam.conf
+
+sudo nmcli connection down rpi-ap &amp;&amp; sudo nmcli connection up rpi-ap
+
+# power-cycle the camera so it asks for a new lease, then:
+sudo ap-clients --show ipcam</code></pre></div>
+
+<p>Keep reservations outside the DHCP pool so they can never collide with a dynamic lease. With
+a pool of <code>.10</code>–<code>.100</code>, put reservations at <code>.200</code>+ — or shrink
+the pool:</p>
+
+<div class="box"><button>copy</button><pre><code># reservations at .200+, pool stays below it
+echo 'dhcp-host=12:34:56:78:9a:bc,192.168.50.200,ipcam' \
+  | sudo tee /etc/NetworkManager/dnsmasq-shared.d/ipcam.conf
+echo 'dhcp-range=192.168.50.10,192.168.50.150,24h' \
+  | sudo tee /etc/NetworkManager/dnsmasq-shared.d/pool.conf
+sudo nmcli connection down rpi-ap &amp;&amp; sudo nmcli connection up rpi-ap</code></pre></div>
+
+<p class="small">Route B (hostapd + dnsmasq) instead: the same <code>dhcp-host=</code> line goes
+in <code>/etc/dnsmasq.d/uap0.conf</code>, then <code>sudo systemctl restart dnsmasq</code>.</p>
+
+<h2 id="onvif"><span class="num">9</span><code>onvif-find.py</code></h2>
+
+<p>Sends a WS-Discovery <code>Probe</code> to UDP multicast <code>239.255.255.250:3702</code> out
+of the AP interface. ONVIF devices reply with "scopes" that normally carry the model and a
+friendly name — the one discovery method that returns a camera's own identity rather than just
+its MAC. Standard library only; no <code>pip install</code>.</p>
+
+<div class="box"><button>copy</button><pre><code>sudo python3 /usr/local/sbin/onvif-find.py 192.168.50.1        # human output
+sudo python3 /usr/local/sbin/onvif-find.py 192.168.50.1 10     # wait 10s instead of 5
+sudo python3 /usr/local/sbin/onvif-find.py 192.168.50.1 --map  # ip⇥name⇥hardware</code></pre></div>
+<pre class="out"><code>probing 239.255.255.250:3702 from 192.168.50.1, listening 5s ...
+
+1 ONVIF device(s):
+
+  192.168.50.42
+    name       : H8c-A1B2C3
+    hardware   : H8c
+    urn        : urn:uuid:3fa1...
+    device svc : http://192.168.50.42/onvif/device_service
+    rtsp guess : rtsp://192.168.50.42:554/  (ask the device: GetStreamUri)
+
+Match the 'name' or 'hardware' field against the label on your camera.</code></pre>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Argument</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>1st — source IP</td><td>The AP interface's own address. Defaults to <code>192.168.50.1</code>. Required so the probe goes out of <code>uap0</code> and not the default route</td></tr>
+    <tr><td>2nd — seconds</td><td>How long to listen. Default 5. Raise it if a camera is slow or the air is busy</td></tr>
+    <tr><td><code>--map</code></td><td>Tab-separated, no prose. This is what <code>ap-clients --onvif</code> consumes</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>It sends three probes of each of two type-sets (<code>NetworkVideoTransmitter</code>, then
+empty for anything ONVIF) because UDP is lossy and budget cameras routinely drop the first
+probe. Exit code <code>2</code> means nobody answered.</p>
+
+<div class="warn"><b>Silence does not mean "not a camera".</b> Plenty of cheap cameras ship with
+ONVIF disabled until you enable it in the vendor's phone app, and some only speak a proprietary
+cloud protocol. Fall back to <code>--find</code>, which needs no cooperation from the device.</div>
+
+<h2 id="code"><span class="num">10</span>Use it from your own code</h2>
+
+<p>For <code>monitoring_control.py</code> or any Flask service on the Pi:</p>
+
+<div class="box"><button>copy</button><pre><code>import json
+import subprocess
+import time
+
+AP_CLIENTS = ["sudo", "-n", "/usr/local/sbin/ap-clients"]
+_cache = {"at": 0.0, "devices": []}
+
+
+def ap_devices(max_age=30.0):
+    """Every device on the Pi's AP. Cached -- see the note about cost below."""
+    if time.monotonic() - _cache["at"] &lt; max_age:
+        return _cache["devices"]
+    try:
+        r = subprocess.run(AP_CLIENTS + ["--json"],
+                           capture_output=True, text=True, timeout=90)
+        _cache["devices"] = json.loads(r.stdout) if r.returncode == 0 else []
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+        pass                       # keep serving the last good answer
+    _cache["at"] = time.monotonic()
+    return _cache["devices"]
+
+
+def ip_of(name):
+    """IP of the device matching `name`, or None if it is not on the AP.
+
+    Exit status 1 means no match -- that is the documented contract, not an error.
+    """
+    r = subprocess.run(AP_CLIENTS + ["--ip", name],
+                       capture_output=True, text=True, timeout=90)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return r.stdout.strip().splitlines()[0]
+
+
+cam = ip_of("H8c-cam")
+if cam:
+    stream = f"rtsp://user:pass@{cam}:554/"</code></pre></div>
+
+<div class="warn">
+<b>Do not call this per HTTP request.</b> Every invocation warms the ARP table first, which
+means an <code>arp-scan</code> sweep — or, without one installed, 253 pings. That is seconds,
+not milliseconds. Cache it, as above, and install <code>arp-scan</code> (<a href="#deps">§11</a>)
+so the sweep is fast.
+</div>
+
+<h3>Running it from a non-root service</h3>
+<p>Your Flask app probably runs as <code>pi</code>, and the script needs root for
+<code>station dump</code>. Grant exactly that one command, nothing more:</p>
+<div class="box"><button>copy</button><pre><code>sudo tee /etc/sudoers.d/ap-clients &gt;/dev/null &lt;&lt;'EOF'
+pi ALL=(root) NOPASSWD: /usr/local/sbin/ap-clients
+EOF
+sudo chmod 440 /etc/sudoers.d/ap-clients
+sudo visudo -c                          # must say "parsed OK"
+
+sudo -n /usr/local/sbin/ap-clients --json | head -3    # test as the pi user</code></pre></div>
+<div class="note">
+Be aware what this grant actually permits: <code>pi</code> can run that script as root with
+<b>any</b> arguments, which includes <code>--alias</code> (writes
+<code>/etc/rpi-ap-sta-hosts</code>) and <code>--ports</code> (probes ports on the AP subnet).
+Nothing there is destructive, but it is broader than read-only. On a single-purpose machine
+where <code>pi</code> is you, that is a reasonable trade; on a shared box, wrap the specific
+call you need in your own tiny root script and grant only that instead.
+</div>
+
+<h2 id="deps"><span class="num">11</span>Dependencies</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Package</th><th>Needed for</th><th>Without it</th></tr></thead>
+  <tbody>
+    <tr><td><code>iw</code></td><td>Association list, signal, uptime</td><td class="n">Nothing works. Already installed if the AP runs</td></tr>
+    <tr><td><code>ieee-data</code> <i>or</i> <code>nmap</code></td><td>Offline MAC → vendor lookup</td><td class="m">Every vendor reads <code>unknown</code>, and <code>--ip &lt;vendor&gt;</code> matches nothing</td></tr>
+    <tr><td><code>arp-scan</code></td><td>Fast subnet sweep</td><td class="m">Falls back to <code>nmap -sn</code>, then to 253 pings. Works, but slow</td></tr>
+    <tr><td><code>python3</code></td><td><code>onvif-find.py</code></td><td class="m">No ONVIF names. Preinstalled on Raspberry Pi OS</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="box"><button>copy</button><pre><code>sudo apt update
+sudo apt install -y iw ieee-data arp-scan
+
+# confirm the vendor table is actually readable
+ls -l /usr/share/ieee-data/oui.txt /usr/share/nmap/nmap-mac-prefixes 2&gt;/dev/null
+sudo ap-clients | head -5              # VENDOR column should no longer say 'unknown'</code></pre></div>
+
+<h2 id="trouble"><span class="num">12</span>Troubleshooting the tools</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Table is empty, no devices at all</td>
+      <td>Nothing is associated, or the AP itself is broken</td>
+      <td><code>sudo iw dev uap0 station dump</code>. Empty too ⇒ this is an AP problem, not a tool problem: <code>sudo apsta-doctor</code></td>
+    </tr>
+    <tr>
+      <td>Every <code>VENDOR</code> says <code>unknown</code></td>
+      <td>No OUI table on disk</td>
+      <td><code>sudo apt install ieee-data</code> (<a href="#deps">§11</a>)</td>
+    </tr>
+    <tr>
+      <td><code>VENDOR</code> says <code>(randomised MAC)</code></td>
+      <td>Not a fault — a phone using per-network privacy addresses</td>
+      <td>Nothing to fix. Do not bother aliasing that MAC; it will change</td>
+    </tr>
+    <tr>
+      <td><code>NAME</code> is <code>-</code> for a device</td>
+      <td>It sent no DHCP hostname, and you have not aliased it</td>
+      <td>Expected on cheap cameras. <code>--find</code> then <code>--alias</code></td>
+    </tr>
+    <tr>
+      <td><code>--ip H8c</code> finds nothing even though the camera is connected</td>
+      <td>The <code>H8c-****</code> label is not transmitted on the LAN (<a href="#names">§4</a>)</td>
+      <td>Add <code>--onvif</code>. If still nothing, <code>--find</code> then <code>--alias</code></td>
+    </tr>
+    <tr>
+      <td><code>--onvif</code> changes nothing and warns on stderr</td>
+      <td><code>onvif-find.py</code> is not next to the script, or was renamed</td>
+      <td>It must be literally <code>onvif-find.py</code> in the same directory as <code>ap-clients</code></td>
+    </tr>
+    <tr>
+      <td>ONVIF finds nothing</td>
+      <td>Camera has ONVIF off, or answers slower than the timeout</td>
+      <td>Enable ONVIF in the vendor app; raise the timeout: <code>onvif-find.py 192.168.50.1 12</code></td>
+    </tr>
+    <tr>
+      <td>A device shows <code>&lt;no IP&gt;</code></td>
+      <td>Associated at 802.11 level but has not completed DHCP</td>
+      <td>Often transient — re-run. Persistent ⇒ a DHCP problem: <code>sudo apsta-doctor</code></td>
+    </tr>
+    <tr>
+      <td>A device has an IP but never appears</td>
+      <td>Static IP outside the subnet, so nothing ARPs for it</td>
+      <td><code>ip neigh show dev uap0</code>. Fix the device's address to match <code>192.168.50.0/24</code></td>
+    </tr>
+    <tr>
+      <td>Very slow (10s+)</td>
+      <td>No <code>arp-scan</code>/<code>nmap</code>, so it is fanning out 253 pings</td>
+      <td><code>sudo apt install arp-scan</code></td>
+    </tr>
+    <tr>
+      <td><code>--find</code> reports nothing after 180s</td>
+      <td>The device never dropped its 802.11 association, or is not on this AP</td>
+      <td>Leave it unplugged longer than 5s. Confirm it is even here: <code>sudo iw dev uap0 station dump</code></td>
+    </tr>
+    <tr>
+      <td><code>--alias &lt;ip&gt;</code> says no device has that IP</td>
+      <td>The device is offline, or you typed a stale address</td>
+      <td>Run <code>sudo ap-clients</code> first and copy a current IP — or alias by MAC, which always works</td>
+    </tr>
+    <tr>
+      <td><code>run me with sudo</code></td>
+      <td><code>iw station dump</code> and port probes need root</td>
+      <td>Use <code>sudo</code>, or the sudoers grant in <a href="#code">§10</a> for services</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<hr style="border:0;border-top:1px solid var(--line);margin:36px 0 18px">
+<p class="small">Companions in this folder:
+<code>RPI4_WIFI_STATION_AND_AP.html</code> (building the concurrent AP),
+<code>RPI4_AP_STA_AUTOSTART.html</code> (making it survive reboots),
+<code>apsta-doctor.sh</code> (why can nothing join),
+<code>ap-clients.sh</code> and <code>onvif-find.py</code> (this page).</p>
+
+</div>
+<script>
+document.querySelectorAll('.box > button').forEach(function (b) {
+  b.textContent = 'copy';
+  b.addEventListener('click', function () {
+    var t = b.parentNode.querySelector('code').innerText;
+    var done = function () {
+      b.textContent = 'copied'; b.classList.add('done');
+      setTimeout(function () { b.textContent = 'copy'; b.classList.remove('done'); }, 1400);
+    };
+    if (navigator.clipboard) { navigator.clipboard.writeText(t).then(done, done); return; }
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); done();
+  });
+});
+</script>
+</body>
+</html>

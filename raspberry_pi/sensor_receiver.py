@@ -5,13 +5,29 @@ Reference Raspberry Pi receiver for the RPi-centric excavation architecture.
 Both ESP32 sensor units PUSH their RAW tilt angle here over the field WiFi:
 
     POST /ingest
-    {"id":"stick"|"beam","angle_deg":12.3,"mpu_ok":true,"seq":N,"uptime_ms":..}
+    {"id":"stick"|"beam","angle_deg":12.3,"mpu_ok":true,"seq":N,"uptime_ms":..,
+     "ip":"192.168.0.61","len_seq":3}
 
 The stick unit (LilyGO T-SIM7000G) ALSO pushes its GNSS fix every ~5 min:
 
     POST /location
     {"id":"stick","gps_ok":true,"lat":..,"lon":..,"alt_m":..,"speed_kph":..,
      "sats":..,"hacc_m":..,"seq":N,"uptime_ms":..}
+
+Each unit also runs its OWN WiFi AP + web page (ESP32_Beam/src/web_config.cpp)
+where the operator types the length of the arm it is bolted to. That length is
+handed over ONCE per edit and retried only until this service answers ok=true:
+
+    POST /length
+    {"id":"beam","len_mm":4200,"seq":3,"ip":"192.168.0.61"}
+    ->  {"ok":true,"applied_mm":4200,"seq":3,"L1":4.2,"L2":1.0}
+
+The unit's edit counter (len_seq) rides along in every /ingest; when it does not
+match the one stored here the /ingest reply carries need_length=true and the unit
+re-runs the hand-off, so a restarted/replaced receiver relearns the geometry with
+nobody walking to the machine. (monitoring_control.py persists the counter to its
+state file; this reference receiver keeps it in RAM only, so it re-asks after a
+restart -- one extra POST per unit.)
 
 This service does what the old ESP32 server used to do, but on the Pi:
   * stores the latest sample per unit (with an arrival timestamp),
@@ -50,9 +66,18 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 # All shared state lives here, guarded by a lock (Flask is multi-threaded).
 _lock = threading.Lock()
 state = {
-    "stick": {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
-    "beam":  {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0},
+    "stick": {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0, "ip": ""},
+    "beam":  {"angle_deg": 0.0, "mpu_ok": False, "seq": -1, "ts": 0.0, "ip": ""},
 }
+# Arm length each unit reported from its own web page (POST /length). `seq` is the
+# unit's edit counter, echoed in every /ingest so a mismatch can be spotted.
+lengths = {
+    "stick": {"mm": 0.0, "seq": -1, "ts": 0.0},
+    "beam":  {"mm": 0.0, "seq": -1, "ts": 0.0},
+}
+# A believable boom/stick length; outside this the entry is junk (half-typed
+# keypad value) and is refused rather than silently wrecking the depth model.
+LEN_MM_MIN, LEN_MM_MAX = 100.0, 20000.0
 # Latest GNSS fix per unit (only units with a SIM7000G populate this -- the
 # stick does by default; the beam stays all-zero unless it gets a modem too).
 location = {
@@ -111,6 +136,12 @@ def build_status():
                 "age_ms": age,
                 "seq": L["seq"],
             }
+        esp_len = {
+            uid: {"mm": round(R["mm"], 1), "seq": R["seq"],
+                  "age_ms": int((now - R["ts"]) * 1000) if R["ts"] else -1,
+                  "ip": state[uid].get("ip", "")}
+            for uid, R in lengths.items()
+        }
         return {
             "boom_deg": round(boom["angle_deg"], 2),
             "stick_deg": round(stick["angle_deg"], 2),
@@ -121,31 +152,52 @@ def build_status():
             "boom_age_ms": boom_age,
             "stick_age_ms": stick_age,
             "location": loc,               # per-unit latest GNSS fix
+            "L1": cfg["L1"], "L2": cfg["L2"],
+            "esp_lengths": esp_len,        # length + web-page IP per ESP32 unit
         }
 
 
 # --------------------------------------------------------------- HTTP routes --
+def _as_int(value, default=-1):
+    """int() that never raises on junk from the wire."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @app.post("/ingest")
 def ingest():
-    """Receive one raw sample from an ESP32 unit."""
+    """Receive one raw sample from an ESP32 unit.
+
+    The reply carries need_length=true when the unit's length edit counter does
+    not match the one we hold, which makes the unit re-run its POST /length
+    hand-off (see the module docstring).
+    """
     d = request.get_json(silent=True) or {}
     uid = d.get("id")
     if uid not in state:
         return jsonify(error="unknown id (use 'stick' or 'beam')"), 400
+    esp_len_seq = _as_int(d.get("len_seq", 0), 0)
     with _lock:
         u = state[uid]
         u["angle_deg"] = float(d.get("angle_deg", u["angle_deg"]))
         u["mpu_ok"] = bool(d.get("mpu_ok", False))
         u["seq"] = int(d.get("seq", -1))
         u["ts"] = time.monotonic()
+        if d.get("ip"):
+            u["ip"] = str(d["ip"])[:40]
         angle, mpu_ok, seq = u["angle_deg"], u["mpu_ok"], u["seq"]
+        # seq 0 = that unit never had a length assigned on its web page, so there
+        # is nothing to ask for and its compiled-in default must not be adopted.
+        need_length = bool(esp_len_seq > 0 and lengths[uid]["seq"] != esp_len_seq)
     # One parsed line per packet so the terminal shows real data, not just
     # "POST /ingest 200". Depth/alarm reflect the latest pair of both units.
     st = build_status()
     print(f"[{uid:>5}] angle={angle:7.2f}  mpu_ok={mpu_ok!s:<5}  seq={seq:<6} | "
           f"depth={st['depth_m']:6.3f}m  alarm={st['depth_alarm']!s:<5}  "
           f"sensor_ok={st['sensor_ok']}", flush=True)
-    return jsonify(ok=True)
+    return jsonify(ok=True, need_length=need_length)
 
 
 @app.post("/location")
@@ -175,6 +227,49 @@ def location_ingest():
     else:
         print(f"[{uid:>5}] GPS  no-fix  seq={snap['seq']}", flush=True)
     return jsonify(ok=True)
+
+
+@app.post("/length")
+def length_ingest():
+    """Accept the arm length an ESP32 unit was given on its own web page.
+
+        POST /length {"id":"beam","len_mm":4200,"seq":3,"ip":"192.168.0.61"}
+        ->           {"ok":true,"applied_mm":4200,"seq":3,"L1":4.2,"L2":1.0}
+
+    beam -> L1, stick -> L2, applied live to the depth model. The unit sends this
+    once per edit and only repeats while we fail to answer ok=true, so a repeat of
+    an already-applied seq is acked again (a lost ACK must not leave the two sides
+    disagreeing) but logged only once.
+    """
+    d = request.get_json(silent=True) or {}
+    uid = d.get("id")
+    if uid not in lengths:
+        return jsonify(ok=False, error="unknown id (use 'stick' or 'beam')"), 400
+    try:
+        mm = float(d.get("len_mm"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="len_mm must be a number (mm)"), 400
+    if not LEN_MM_MIN <= mm <= LEN_MM_MAX:
+        print(f"[len] REFUSED {uid} length {mm:.0f} mm: outside "
+              f"{LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f} mm", flush=True)
+        return jsonify(ok=False,
+                       error=f"len_mm must be {LEN_MM_MIN:.0f}-{LEN_MM_MAX:.0f}"), 400
+    seq = _as_int(d.get("seq", -1))
+    ck = "L1" if uid == "beam" else "L2"
+    with _lock:
+        rec = lengths[uid]
+        repeat = rec["seq"] == seq and abs(rec["mm"] - mm) < 0.5
+        rec.update(mm=mm, seq=seq, ts=time.monotonic())
+        if d.get("ip"):
+            state[uid]["ip"] = str(d["ip"])[:40]
+        cfg[ck] = mm / 1000.0
+        L1, L2 = cfg["L1"], cfg["L2"]
+    if not repeat:
+        print(f"[len] {uid} web page assigned {mm:.0f} mm ({mm / 1000.0:.3f} m) "
+              f"seq={seq} -> {ck}   geometry now L1={L1:.3f} m L2={L2:.3f} m",
+              flush=True)
+    return jsonify(ok=True, applied_mm=round(mm, 1), seq=seq,
+                   L1=round(L1, 4), L2=round(L2, 4), repeat=repeat)
 
 
 @app.get("/status")
@@ -212,7 +307,7 @@ def main():
 
     print(f"Receiver on :{args.port}  L1={cfg['L1']} L2={cfg['L2']} "
           f"target={cfg['target_depth']}m  "
-          f"(POST /ingest, POST /location, GET /status)")
+          f"(POST /ingest, POST /location, POST /length, GET /status)")
     # threaded=True so two ESP32s + /status pollers don't block each other.
     app.run(host=args.host, port=args.port, threaded=True)
 

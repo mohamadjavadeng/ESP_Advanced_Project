@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raspberry Pi 4 — autostart, network readiness, fixed AP IP, client discovery</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#0f1115; --fg:#e8ecf1; --dim:#98a2b0; --card:#171a21; --line:#262c37;
+      --acc:#63b3ff; --acc-bg:#12243a; --ok:#5ddc9a; --ok-bg:#0f2b1d;
+      --warn:#fbbf5a; --warn-bg:#2e2410; --bad:#ff8a80; --bad-bg:#2e1615;
+      --code:#12151b; --codefg:#dde3ea; --kbd:#232936;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --fg:#16181d; --dim:#5b6472; --card:#f6f7f9; --line:#dfe3e8;
+    --acc:#0b62d0; --acc-bg:#e8f1fd; --ok:#0a7d40; --ok-bg:#e6f5ec;
+    --warn:#8a5a00; --warn-bg:#fdf3e0; --bad:#b3261e; --bad-bg:#fdeceb;
+    --code:#f2f3f5; --codefg:#1c2026; --kbd:#e9ecf0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow-x:hidden}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 90px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .lede{color:var(--dim);font-size:17px;margin:0 0 26px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:16px;border-top:1px solid var(--line);
+     letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px;letter-spacing:.01em}
+  h4{font-size:14px;margin:20px 0 6px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.06em}
+  h2 .num{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:var(--code);color:var(--codefg);padding:1px 5px;border-radius:4px}
+  pre{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre code{background:none;padding:0;font-size:inherit}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+    font-weight:700;white-space:nowrap}
+  tbody tr:hover{background:var(--card)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;margin:16px 0}
+  .note,.warn,.ok,.bad{border-left:4px solid;border-radius:8px;padding:12px 15px;margin:16px 0}
+  .note{border-color:var(--acc);background:var(--acc-bg)}
+  .warn{border-color:var(--warn);background:var(--warn-bg)}
+  .ok{border-color:var(--ok);background:var(--ok-bg)}
+  .bad{border-color:var(--bad);background:var(--bad-bg)}
+  .note b,.warn b,.ok b,.bad b{letter-spacing:.01em}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;
+    padding:2px 8px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+  .t-new{background:var(--ok-bg);color:var(--ok)}
+  .t-mod{background:var(--warn-bg);color:var(--warn)}
+  .t-none{background:var(--code);color:var(--dim)}
+  .t-bad{background:var(--bad-bg);color:var(--bad)}
+  ol,ul{margin:10px 0;padding-left:24px}
+  li{margin:6px 0}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  kbd{background:var(--kbd);border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:inherit;font-weight:600}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;column-gap:28px}
+  @media (max-width:620px){.toc ol{columns:1}}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+  a{color:var(--acc)}
+  .small{font-size:13.5px;color:var(--dim)}
+  hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+  .fig{font-size:13px;color:var(--dim);margin-top:-8px}
+  .ascii{background:var(--code);color:var(--codefg);border:1px solid var(--line);
+    border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.45;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:16px 0}
+  .q{font-size:15px;color:var(--dim);font-style:italic;margin:0 0 14px;
+     padding-left:12px;border-left:3px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Raspberry Pi 4 in the field — autostart, network readiness, a fixed IP the ESP32s can trust, and who is connected</h1>
+<p class="lede">Five questions, answered against <b>this</b> project: the DWIN panel program
+<code>monitoring_control.py</code>, the two ESP32 units that POST angles to it, and the
+concurrent access point the repo already sets up in <code>ap_sta_setup.py</code>. Every path,
+port and SSID below is the one actually in the code — not a generic example.</p>
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#stack">Your stack, at a glance</a></li>
+    <li><a href="#startup">Run your code at startup</a></li>
+    <li><a href="#wait">Wait for Wi-Fi before running</a></li>
+    <li><a href="#fixed">A fixed Pi IP the ESP32s can hard-code</a></li>
+    <li><a href="#who">List every device connected to the Pi</a></li>
+    <li><a href="#apsta">Wi-Fi client and hotspot at the same time</a></li>
+    <li><a href="#bringup">Bring-up order (do it in this sequence)</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+  </ol>
+</div>
+
+<h2 id="stack"><span class="num">1</span>Your stack, at a glance</h2>
+
+<p>Everything in this guide is written for the program you already have. These are the
+facts it depends on, pulled straight out of the source:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Thing</th><th>Value</th><th>Where it comes from</th></tr></thead>
+  <tbody>
+    <tr><td><b>Main program</b></td><td><code>raspberry_pi/monitoring_control.py</code></td><td>DWIN panel + ESP receivers + cloud + RFID</td></tr>
+    <tr><td><b>HTTP server</b></td><td><code>0.0.0.0:5000</code></td><td><code>--http-host</code> / <code>--http-port</code></td></tr>
+    <tr><td><b>Endpoints</b></td><td><code>/ingest</code> <code>/location</code> <code>/length</code> <code>/status</code> <code>/hse</code></td><td>what the ESP32s POST to</td></tr>
+    <tr><td><b>HSE camera socket</b></td><td>TCP <code>5050</code></td><td><code>--hse-port</code>, newline-delimited JSON</td></tr>
+    <tr><td><b>DWIN panel</b></td><td><code>/dev/serial0</code> @ <code>115200</code></td><td><code>--dwin-port</code> / <code>--dwin-baud</code></td></tr>
+    <tr><td><b>Cloud</b></td><td><code>https://app.geo-mind.ai</code></td><td>needs internet, <b>retried internally</b></td></tr>
+    <tr><td><b>Secret</b></td><td><code>$GEOMIND_APIKEY</code></td><td>env var — must not land in git</td></tr>
+    <tr><td><b>Must run from</b></td><td><code>raspberry_pi/</code></td><td><code>import dwin_lcd</code> + relative <code>Driver_name_database.xlsx</code></td></tr>
+    <tr><td><b>State file</b></td><td><code>raspberry_pi/monitoring_state.json</code></td><td>absolute path derived from <code>__file__</code> — safe</td></tr>
+    <tr><td><b>ESP32 BEAM</b></td><td>posts <code>id:"beam"</code> → sets <code>L1</code></td><td>own AP <code>EXCAV-BEAM</code> @ <code>192.168.4.1</code></td></tr>
+    <tr><td><b>ESP32 STICK</b></td><td>posts <code>id:"stick"</code> → sets <code>L2</code></td><td>own AP <code>EXCAV-STICK</code> @ <code>192.168.5.1</code></td></tr>
+    <tr><td><b>Pi access point</b></td><td><code>RPi_AP</code> / <code>raspberry123</code> @ <code>192.168.50.1</code></td><td><code>ap_sta_setup.py</code>, DHCP <code>.10</code>–<code>.100</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+<b>Port mismatch already in your tree.</b> <code>monitoring_control.py</code> defaults to
+<code>--http-port 5000</code> and the ESP32 firmware defaults to
+<code>DEF_RPI_PORT = 5000</code> — those agree. But <code>sensor_receiver.py</code> (the
+lighter, panel-free receiver) defaults to <code>--port 8080</code>. If you ever run that one
+instead, start it with <code>--port 5000</code> or the ESP32s will POST into a closed port
+and you will see <code>[post] failed: connection refused</code> on the serial monitor.
+</div>
+
+<h2 id="startup"><span class="num">2</span>Run your code at startup</h2>
+
+<p class="q">"How do I put my code in the startup of the Raspberry Pi?"</p>
+
+<p>Use <b>systemd</b>. There are four ways to autostart something on a Pi and only one of
+them handles the things your program actually needs — a working directory, an environment
+variable for the API key, serial-port group membership, ordering after the access point,
+and an automatic restart when it crashes at 3 a.m. in a quarry.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Method</th><th>Restarts on crash?</th><th>Ordering / deps?</th><th>Logs?</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td><code>/etc/rc.local</code></td><td>No</td><td>No</td><td>No</td><td><span class="tag t-bad">Deprecated</span> not present on Bookworm by default</td></tr>
+    <tr><td><code>crontab @reboot</code></td><td>No</td><td>No</td><td>You redirect by hand</td><td><span class="tag t-none">Toy</span> no env, no ordering</td></tr>
+    <tr><td>Desktop autostart</td><td>No</td><td>No</td><td>No</td><td><span class="tag t-bad">Wrong</span> needs a graphical login session</td></tr>
+    <tr><td><b>systemd unit</b></td><td><b>Yes</b></td><td><b>Yes</b></td><td><b>journald</b></td><td><span class="tag t-new">Use this</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Step 1 — put the API key in a root-only file</h3>
+
+<p>Keeping it out of the unit file means it does not show up in <code>systemctl cat</code>
+and does not get copied around when you share the service definition.</p>
+
+<pre><code>sudo install -m 600 -o root -g root /dev/null /etc/excavator-monitor.env
+sudo nano /etc/excavator-monitor.env</code></pre>
+
+<pre><code># /etc/excavator-monitor.env   (chmod 600, root:root)
+GEOMIND_APIKEY=your_pdo_device_service_key_here</code></pre>
+
+<p class="small">systemd reads <code>EnvironmentFile=</code> <b>as root, before</b> it drops to
+<code>User=pi</code>, so mode <code>600 root:root</code> is both safe and workable.</p>
+
+<h3>Step 2 — the unit file</h3>
+
+<pre><code>sudo nano /etc/systemd/system/excavator-monitor.service</code></pre>
+
+<pre><code>[Unit]
+Description=Excavator depth monitor (DWIN panel + ESP32 receivers + cloud)
+# We depend on the ACCESS POINT, not on the internet: the cloud thread retries on
+# its own and the excavator must keep measuring depth with no upstream modem.
+Wants=network.target ap-sta.service
+After=network.target ap-sta.service hostapd.service dnsmasq.service
+# Crash-loop backstop. NOTE: in systemd >= 229 these two live in [Unit], not
+# [Service] -- Raspberry Pi OS Bookworm ships systemd 252.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pi
+# /dev/serial0 (the DWIN panel) is owned by root:dialout.
+SupplementaryGroups=dialout
+
+# REQUIRED. `import dwin_lcd` and the relative --driver-csv path are both
+# resolved against this directory. Without it the service dies on ImportError.
+WorkingDirectory=/home/pi/ESP_Advanced_Project/raspberry_pi
+
+EnvironmentFile=/etc/excavator-monitor.env
+# Without this, Python block-buffers stdout when it is a pipe and `journalctl -f`
+# shows nothing for minutes. This is the single most common "my service is dead"
+# false alarm.
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/usr/bin/python3 monitoring_control.py \
+    --http-port 5000 \
+    --dwin-port /dev/serial0 --dwin-baud 115200 \
+    --geomind-host https://app.geo-mind.ai \
+    --device-id excavator1 \
+    --driver-csv Driver_name_database.xlsx
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=excavator
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<div class="note">
+<b>Adjust two things for your machine.</b> Replace <code>pi</code> with the output of
+<code>whoami</code>, and the <code>WorkingDirectory</code> with the output of <code>pwd</code>
+run inside your <code>raspberry_pi/</code> folder. If you installed the dependencies into a
+virtualenv, point <code>ExecStart</code> at that interpreter instead —
+<code>/home/pi/venv/bin/python3</code> — and drop the <code>python3</code> from the argument
+list.
+</div>
+
+<h3>Step 3 — enable it</h3>
+
+<pre><code>sudo systemd-analyze verify /etc/systemd/system/excavator-monitor.service  # catches typos
+sudo systemctl daemon-reload
+sudo systemctl enable --now excavator-monitor
+systemctl status excavator-monitor</code></pre>
+
+<h3>Day-to-day commands</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Goal</th><th>Command</th></tr></thead>
+  <tbody>
+    <tr><td>Live log (like a serial monitor)</td><td><code>journalctl -u excavator-monitor -f</code></td></tr>
+    <tr><td>Everything since this boot</td><td><code>journalctl -u excavator-monitor -b</code></td></tr>
+    <tr><td>Last 10 minutes</td><td><code>journalctl -u excavator-monitor --since -10min</code></td></tr>
+    <tr><td>Restart after editing the Python</td><td><code>sudo systemctl restart excavator-monitor</code></td></tr>
+    <tr><td>Stop it to run by hand while debugging</td><td><code>sudo systemctl stop excavator-monitor</code></td></tr>
+    <tr><td>Don't start at next boot</td><td><code>sudo systemctl disable excavator-monitor</code></td></tr>
+    <tr><td>See the unit as systemd parsed it</td><td><code>systemctl cat excavator-monitor</code></td></tr>
+    <tr><td>Why is boot slow?</td><td><code>systemd-analyze blame | head -20</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+<b>Free the serial port first, or the DWIN panel will never answer.</b> By default the Pi
+puts a login console on the UART. Run <code>sudo raspi-config</code> →
+<b>Interface Options</b> → <b>Serial Port</b> → "login shell over serial?" <b>No</b> →
+"serial port hardware enabled?" <b>Yes</b>. For a rock-solid 115200 link to the panel, also
+add <code>dtoverlay=disable-bt</code> to <code>/boot/firmware/config.txt</code> (Bookworm) or
+<code>/boot/config.txt</code> (Bullseye) — that moves <code>/dev/serial0</code> off the
+mini-UART and onto the full PL011 <code>ttyAMA0</code>, which does not share a clock with
+anything else. Reboot after either change.
+</div>
+
+<h4>If you run the lighter receiver instead</h4>
+<pre><code># /etc/systemd/system/sensor-receiver.service  -- same shape, note the explicit port
+ExecStart=/usr/bin/python3 sensor_receiver.py --host 0.0.0.0 --port 5000</code></pre>
+
+<h2 id="wait"><span class="num">3</span>Wait for Wi-Fi before running</h2>
+
+<p class="q">"How can I tell the Raspberry Pi to wait until the Wi-Fi connection is
+established, then run these codes at startup?"</p>
+
+<p>The literal answer is two lines, and I give it below. But read the box first, because
+for <i>your</i> program the literal answer is usually the wrong thing to do.</p>
+
+<div class="ok">
+<b>You mostly do not need to wait at all.</b> Your server binds
+<code>0.0.0.0:5000</code>. Binding to <code>0.0.0.0</code> succeeds even when the Pi has
+<b>no</b> network at all — the socket simply accepts connections on whatever interfaces
+appear later. You would only need to block on the network if you bound a
+<b>specific</b> IP (<code>--http-host 192.168.50.1</code>), because that address has to exist
+at <code>bind()</code> time or Python raises
+<code>OSError: [Errno 99] Cannot assign requested address</code>. Same story for the cloud
+thread: it already catches failures and retries, and the docstring is explicit that the
+excavator keeps working — depth, alarm, buzzer — with no network.
+</div>
+
+<h3>The literal answer</h3>
+
+<p>systemd has two different targets and the difference is the whole question:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Target</th><th>Means</th><th>Good enough to POST?</th></tr></thead>
+  <tbody>
+    <tr><td><code>network.target</code></td><td>The network <i>management stack</i> has started. Interfaces may still be down and have no IP.</td><td><span class="tag t-bad">No</span></td></tr>
+    <tr><td><code>network-online.target</code></td><td>At least one connection is fully up with an address. Only reached if a unit pulls it in.</td><td><span class="tag t-new">Yes</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>[Unit]
+# BOTH lines are required. `After=` alone only orders you behind the target --
+# it does not cause the target to be reached. `Wants=` is what actually pulls in
+# NetworkManager-wait-online.service (or systemd-networkd-wait-online).
+Wants=network-online.target
+After=network-online.target</code></pre>
+
+<div class="warn">
+<b>Two traps with <code>network-online.target</code> on a field machine.</b>
+<ol>
+  <li><b>It is satisfied by <i>any</i> managed connection</b>, including a link that has an
+      IP but no route to your Pi and no internet. "Online" here means "an interface came
+      up", not "the thing you care about is reachable".</li>
+  <li><b>It blocks boot when there is no modem.</b> <code>nm-online</code> waits its full
+      timeout (30–60 s depending on version) before giving up. On an excavator parked out
+      of coverage, that is a minute of dead panel on every power-up, for nothing.</li>
+</ol>
+</div>
+
+<h3>The better answer: wait for what you actually need</h3>
+
+<p>Drop a small script that waits for a <i>specific, checkable</i> condition, and — this is
+the important part — <b>always exits 0</b>, so a timeout logs a reason instead of refusing
+to start the excavator.</p>
+
+<pre><code>sudo nano /usr/local/sbin/wait-for-net.sh
+sudo chmod +x /usr/local/sbin/wait-for-net.sh</code></pre>
+
+<pre><code>#!/bin/bash
+# Block until the Pi has what the caller actually needs, then get out of the way.
+#   $1 = ap | lan | internet     (default: ap)
+#   $2 = timeout in seconds      (default: 60)
+#
+# Exits 0 even on timeout, ON PURPOSE: used as ExecStartPre=, a non-zero exit
+# would refuse to start the depth monitor -- and the excavator must run offline.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+what=${1:-ap}; timeout=${2:-60}; t0=$SECONDS
+
+while [ $((SECONDS - t0)) -lt "$timeout" ]; do
+  case "$what" in
+    ap)       ip -4 addr show uap0 2>/dev/null | grep -q 'inet ' && exit 0 ;;
+    lan)      ip -4 route show default | grep -q .               && exit 0 ;;
+    internet) ping -c1 -W2 1.1.1.1 >/dev/null 2>&1               && exit 0 ;;
+  esac
+  sleep 1
+done
+
+logger -t wait-for-net "timed out after ${timeout}s waiting for '$what' -- starting anyway"
+exit 0</code></pre>
+
+<p>Wire it in — this line is already in the unit in section 2:</p>
+
+<pre><code>ExecStartPre=/usr/local/sbin/wait-for-net.sh ap 45</code></pre>
+
+<p>Test it standalone before trusting it:
+<code>time /usr/local/sbin/wait-for-net.sh ap 10; echo "exit=$?"</code></p>
+
+<h3>What the boot sequence looks like once it is wired up</h3>
+
+<div class="ascii">systemd boot
+  │
+  ├─ network.target ................ NetworkManager running
+  │
+  ├─ ap-sta.service ................ creates uap0, gives it 192.168.50.1   ◀── from ap_sta_setup.py
+  │       │
+  │       ├─ hostapd.service ....... starts broadcasting "RPi_AP"
+  │       └─ dnsmasq.service ....... starts handing out .10 - .100 leases
+  │
+  └─ excavator-monitor.service ..... After= all of the above
+          │
+          ├─ ExecStartPre: wait-for-net.sh ap 45   (uap0 has an IP? go)
+          └─ ExecStart:    monitoring_control.py --http-port 5000 ...
+                             │
+                             └─ binds 0.0.0.0:5000 ─── ESP32s POST /ingest
+                                cloud thread retries app.geo-mind.ai in the background,
+                                whether or not the modem ever shows up</div>
+
+<h3>Other ways, if you prefer them</h3>
+
+<pre><code># A. NetworkManager's own wait tool, inline (Bookworm / any NM system):
+ExecStartPre=/usr/bin/nm-online -s -q --timeout=60
+
+# B. Wait for a specific host to answer, not merely for "a network":
+ExecStartPre=/bin/bash -c 'until ping -c1 -W1 192.168.50.1 >/dev/null 2>&1; do sleep 1; done'
+#    Beware: no timeout -> this hangs boot forever if that host never appears.
+
+# C. A dispatcher hook that fires the moment NM brings a link up (event, not poll):
+#    /etc/NetworkManager/dispatcher.d/50-excavator   (chmod 755, root:root)
+#!/bin/sh
+[ "$2" = "up" ] && systemctl start excavator-monitor
+exit 0</code></pre>
+
+<h2 id="fixed"><span class="num">4</span>A fixed Pi IP the ESP32s can hard-code</h2>
+
+<p class="q">"How can I make my RPi4 the Wi-Fi station with a constant IP that I put in my
+ESP32, to avoid initial configuration every time the Pi connects to a different modem?"</p>
+
+<p>This is the right question to be asking, and the repo already contains the right answer.
+The problem is structural: while the Pi is a <b>client</b> of somebody else's modem, that
+modem picks the subnet and the address. New modem, new subnet, and the
+<code>DEF_RPI_HOST</code> baked into both ESP32s is instantly wrong. No amount of static-IP
+configuration on the Pi fixes that, because <code>192.168.0.110</code> is not even a valid
+address on a modem that hands out <code>10.0.0.x</code>.</p>
+
+<p><b>Invert it. Stop being a guest on the modem's network — own the network the ESP32s
+join.</b> Make the Pi the access point. Then the Pi's address on that network is a constant
+you choose, and it is <i>completely independent of which modem, if any, the Pi is also
+connected to.</i></p>
+
+<div class="ascii">BEFORE  (Pi is a guest — breaks on every modem change)
+
+   modem A: 192.168.0.x        modem B: 10.0.0.x        phone hotspot: 172.20.10.x
+        │                           │                          │
+        └── Pi = 192.168.0.110      └── Pi = 10.0.0.57         └── Pi = 172.20.10.4
+             ESP32 hard-coded            ESP32 still says          ESP32 still says
+             192.168.0.110  ✔            192.168.0.110  ✘          192.168.0.110  ✘
+
+
+AFTER  (Pi owns the network the ESP32s join — modem is irrelevant)
+
+   any modem / any hotspot / no modem at all
+        │
+        └── wlan0 (client, whatever IP it gets — nobody cares)
+            Raspberry Pi  ── one radio ──
+            └── uap0 = 192.168.50.1  ◀── ALWAYS. Hard-code this in both ESP32s.
+                  │
+                  ├── EXCAV-BEAM  → DHCP 192.168.50.10
+                  └── EXCAV-STICK → DHCP 192.168.50.11</div>
+
+<h3>Step 1 — bring the AP up (already scripted for you)</h3>
+
+<pre><code>cd ~/ESP_Advanced_Project/raspberry_pi
+sudo python3 ap_sta_setup.py
+sudo reboot</code></pre>
+
+<p>That gives you, permanently and across reboots:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Setting</th><th>Value</th><th>Change it in</th></tr></thead>
+  <tbody>
+    <tr><td>AP SSID</td><td><code>RPi_AP</code></td><td><code>AP_SSID</code> at the top of <code>ap_sta_setup.py</code></td></tr>
+    <tr><td>AP password</td><td><code>raspberry123</code></td><td><code>AP_PASS</code> (≥ 8 chars for WPA2)</td></tr>
+    <tr><td><b>Pi's fixed IP</b></td><td><code>192.168.50.1</code></td><td><code>AP_IP</code> / <code>AP_CIDR</code></td></tr>
+    <tr><td>DHCP pool for the ESP32s</td><td><code>192.168.50.10</code>–<code>.100</code></td><td><code>DHCP_START</code> / <code>DHCP_END</code></td></tr>
+    <tr><td>Country code</td><td><code>US</code></td><td><code>COUNTRY</code> — <b>set this to your actual country</b> (<code>OM</code>, <code>GB</code>, …)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="ok">
+<b>The subnet choice is already correct — keep it.</b> <code>192.168.50.x</code> deliberately
+does not collide with the BEAM's own SoftAP (<code>192.168.4.1</code>) or the STICK's
+(<code>192.168.5.1</code>). If you ever change <code>AP_IP</code>, stay off
+<code>192.168.4.x</code> and <code>192.168.5.x</code>, or a laptop sitting on both networks
+will route to the wrong device.
+</div>
+
+<h3>Step 2 — point the ESP32s at it</h3>
+
+<p>In <b>both</b> <code>ESP32_Beam/src/main.cpp</code> and
+<code>ESP32_Stick/src/main.cpp</code>:</p>
+
+<pre><code>constexpr char     DEF_WIFI_SSID[] = "RPi_AP";          // was "A 3" / "AMAN 2"
+constexpr char     DEF_WIFI_PASS[] = "raspberry123";
+constexpr char     DEF_RPI_HOST[]  = "192.168.50.1";    // was "192.168.0.110"
+constexpr uint16_t DEF_RPI_PORT    = 5000;              // unchanged</code></pre>
+
+<div class="bad">
+<b>The trap that will cost you an hour: NVS beats the constants.</b> Those
+<code>DEF_*</code> values are <b>factory defaults only</b>. Once anything has been saved on
+the unit's web portal, the saved copy lives in NVS and <b>wins on every boot</b> — reflashing
+does <i>not</i> clear it. You have already seen this: the boot log printed
+<code>field ssid 'AMAN 2'</code> while the source said <code>"A 3"</code>.
+<br><br>
+Two ways out, pick one per unit:
+<ul>
+  <li><b>Web portal</b> — join <code>EXCAV-BEAM</code>, open <code>http://192.168.4.1/</code>,
+      type the new SSID / password / Pi IP, save. No cable needed. Do the same on
+      <code>EXCAV-STICK</code> at <code>http://192.168.5.1/</code>.</li>
+  <li><b>Wipe NVS</b> so the new constants take effect:
+      <code>pio run -t erase &amp;&amp; pio run -t upload</code>. This also erases the saved
+      arm length — re-enter it.</li>
+</ul>
+</div>
+
+<h3>Confirm it worked</h3>
+
+<p>The serial monitor now prints the station IP on the join edge — that is the change we
+just made to both firmwares:</p>
+
+<pre><code>[wifi] connected to 'RPi_AP' -- ESP station IP 192.168.50.10  gw 192.168.50.1  RSSI -47 dBm</code></pre>
+
+<p>A <code>gw</code> of <code>192.168.50.1</code> proves the unit joined the <i>Pi's</i> AP
+and not some leftover modem.</p>
+
+<h3>The other two options, and why they are second-best here</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Option</th><th>How</th><th>Survives a modem swap?</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Pi is the AP</b><br><span class="tag t-new">Recommended</span></td>
+      <td><code>ap_sta_setup.py</code> → always <code>192.168.50.1</code></td>
+      <td><b>Yes</b> — the modem is not involved at all</td>
+    </tr>
+    <tr>
+      <td>mDNS name instead of an IP</td>
+      <td>ESP32 resolves <code>raspberrypi.local</code> via <code>MDNS.queryHost()</code> instead of a literal address</td>
+      <td>Yes, but adds a resolution step that fails silently and is painful to debug in the field</td>
+    </tr>
+    <tr>
+      <td>Static client IP / DHCP reservation</td>
+      <td><code>nmcli</code> below, or reserve the Pi's MAC on the router</td>
+      <td><b>No</b> — a static <code>192.168.0.110</code> is meaningless on a <code>10.0.0.x</code> modem</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>For completeness — a static address as a <i>client</i>, which is the right tool only for a
+permanent installation behind one known router:</p>
+
+<pre><code># Bookworm / NetworkManager
+nmcli con show                                   # find the connection name
+sudo nmcli con mod "MyWiFi" ipv4.method manual \
+     ipv4.addresses 192.168.0.110/24 \
+     ipv4.gateway   192.168.0.1 \
+     ipv4.dns       "8.8.8.8 1.1.1.1"
+sudo nmcli con up "MyWiFi"
+
+# Bullseye / dhcpcd  -> append to /etc/dhcpcd.conf
+interface wlan0
+static ip_address=192.168.0.110/24
+static routers=192.168.0.1
+static domain_name_servers=8.8.8.8 1.1.1.1</code></pre>
+
+<h2 id="who"><span class="num">5</span>List every device connected to the Pi</h2>
+
+<p class="q">"Can I configure my Raspberry Pi to find all the IPs that are connected to it?"</p>
+
+<p>Yes — four ways, at three different layers. They answer slightly different questions, so
+knowing which is which saves you from chasing a device that is associated but has no lease.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Layer</th><th>Command</th><th>Answers</th></tr></thead>
+  <tbody>
+    <tr><td>802.11 radio</td><td><code>sudo iw dev uap0 station dump</code></td><td>Who is <b>associated</b>, with signal strength — even before DHCP</td></tr>
+    <tr><td>DHCP</td><td><code>cat /var/lib/misc/dnsmasq.leases</code></td><td>Who got an <b>IP</b>, plus MAC and hostname</td></tr>
+    <tr><td>ARP / neighbours</td><td><code>ip neigh show dev uap0</code></td><td>Who the Pi has actually <b>talked to</b> recently</td></tr>
+    <tr><td>Active scan</td><td><code>nmap -sn 192.168.50.0/24</code></td><td>Anything alive, including static-IP devices with no lease</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code># The lease file columns are: expiry(epoch)  MAC  IP  hostname  client-id
+$ cat /var/lib/misc/dnsmasq.leases
+1754160000 3c:71:bf:a1:b2:c3 192.168.50.10 beam  01:3c:71:bf:a1:b2:c3
+1754160123 24:6f:28:d4:e5:f6 192.168.50.11 stick 01:24:6f:28:d4:e5:f6
+
+# Signal strength per client -- useful for "why does the stick drop out at full reach?"
+$ sudo iw dev uap0 station dump | grep -E 'Station|signal:'
+Station 3c:71:bf:a1:b2:c3 (on uap0)
+        signal:         -47 dBm
+
+# Live watch while an ESP32 boots
+$ watch -n1 'sudo iw dev uap0 station dump | grep Station; echo; cat /var/lib/misc/dnsmasq.leases'</code></pre>
+
+<div class="note">
+<b>Lease file path depends on who runs the DHCP server.</b> Your
+<code>ap_sta_setup.py</code> uses the system <code>dnsmasq</code> with a drop-in at
+<code>/etc/dnsmasq.d/uap0.conf</code>, so leases land in the Debian default,
+<code>/var/lib/misc/dnsmasq.leases</code>. If you ever switch to NetworkManager's built-in
+shared mode instead, they move to
+<code>/var/lib/NetworkManager/dnsmasq-wlan0.leases</code>. Same format either way.
+</div>
+
+<div class="ok">
+<b>You already have this, for free, without any of the above.</b> Both firmwares put their
+own address into every telemetry POST — <code>doc["ip"] = WiFi.localIP().toString()</code> —
+so <code>monitoring_control.py</code> knows each unit's IP as a side effect of receiving
+angles. <code>curl -s http://192.168.50.1:5000/status</code> is the fastest check that
+matters, because it tells you not just "connected" but "connected <i>and</i> sending data".
+An ESP32 that shows up in <code>station dump</code> but not in <code>/status</code> has a Wi-Fi
+link and a broken HTTP path — a completely different bug from one that never associates.
+</div>
+
+<h3>A one-shot script that merges all three layers</h3>
+
+<pre><code>nano ~/ESP_Advanced_Project/raspberry_pi/who_is_connected.py
+chmod +x ~/ESP_Advanced_Project/raspberry_pi/who_is_connected.py</code></pre>
+
+<pre><code>#!/usr/bin/env python3
+"""Who is on the Pi's access point right now?
+
+Merges the three layers that can disagree:
+  radio  -- iw station dump   : associated, with RSSI (may have no IP yet)
+  dhcp   -- dnsmasq.leases    : got an address (may have since walked away)
+  arp    -- ip neigh          : actually exchanged packets recently
+
+Run:  sudo python3 who_is_connected.py
+(sudo only for `iw station dump`; the rest works unprivileged.)
+"""
+import pathlib
+import re
+import subprocess
+import time
+
+AP_IFACE   = "uap0"
+LEASE_FILE = "/var/lib/misc/dnsmasq.leases"
+
+
+def leases():
+    """MAC -> (ip, hostname, expiry_epoch) from the dnsmasq lease file."""
+    out = {}
+    p = pathlib.Path(LEASE_FILE)
+    if not p.exists():
+        return out
+    for line in p.read_text().splitlines():
+        f = line.split()
+        if len(f) >= 4:
+            out[f[1].lower()] = (f[2], f[3], int(f[0]))
+    return out
+
+
+def stations():
+    """MAC -> {'signal': '-47 dBm', ...} for everyone associated at the radio layer."""
+    out, mac = {}, None
+    try:
+        txt = subprocess.check_output(
+            ["iw", "dev", AP_IFACE, "station", "dump"], text=True)
+    except Exception as exc:                 # not root, or uap0 does not exist
+        print(f"  (!) iw station dump failed: {exc}")
+        return out
+    for line in txt.splitlines():
+        m = re.match(r"Station ([0-9a-fA-F:]{17})", line.strip())
+        if m:                                # the MAC line also contains colons,
+            mac = m.group(1).lower()         # so match it BEFORE the k:v branch
+            out[mac] = {}
+        elif mac and ":" in line:
+            k, _, v = line.partition(":")
+            out[mac][k.strip()] = v.strip()
+    return out
+
+
+def neighbours():
+    """MAC -> ip, from the kernel's ARP table (who we actually talked to)."""
+    out = {}
+    try:
+        txt = subprocess.check_output(
+            ["ip", "neigh", "show", "dev", AP_IFACE], text=True)
+    except Exception:
+        return out
+    for line in txt.splitlines():
+        # "show dev uap0" prints 4 fields (IP lladdr MAC STATE); a bare "ip neigh"
+        # prints 6 (IP dev uap0 lladdr MAC STATE). Index off "lladdr" to take both.
+        f = line.split()
+        if "lladdr" in f and f[-1] not in ("FAILED", "INCOMPLETE"):
+            out[f[f.index("lladdr") + 1].lower()] = f[0]
+    return out
+
+
+def main():
+    lease, sta, arp = leases(), stations(), neighbours()
+    macs = sorted(set(lease) | set(sta) | set(arp))
+
+    if not macs:
+        print(f"Nothing on {AP_IFACE}. Is hostapd running?  "
+              f"systemctl status hostapd")
+        return
+
+    print(f"{'MAC':<19} {'IP':<16} {'NAME':<12} {'RSSI':>8}  {'IDLE':>7}  SEEN BY")
+    print("-" * 78)
+    for mac in macs:
+        ip, name, exp = lease.get(mac, ("-", "-", 0))
+        if ip == "-":
+            ip = arp.get(mac, "-")           # static-IP client: no lease, but in ARP
+        info = sta.get(mac, {})
+        rssi = info.get("signal", "-").replace(" dBm", "")
+        idle = info.get("inactive time", "-").replace(" ms", "")
+        seen = "+".join(w for w, hit in
+                        (("radio", mac in sta), ("dhcp", mac in lease),
+                         ("arp", mac in arp)) if hit)
+        left = f"{int(exp - time.time()) // 60}m" if exp else "-"
+        print(f"{mac:<19} {ip:<16} {name:<12} {rssi:>8}  {idle:>7}  {seen}  lease {left}")
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+
+<pre><code>$ sudo python3 who_is_connected.py
+MAC                 IP               NAME             RSSI     IDLE  SEEN BY
+------------------------------------------------------------------------------
+24:6f:28:d4:e5:f6   192.168.50.11    stick             -52      120  radio+dhcp+arp  lease 1420m
+3c:71:bf:a1:b2:c3   192.168.50.10    beam              -47       40  radio+dhcp+arp  lease 1438m</code></pre>
+
+<h2 id="apsta"><span class="num">6</span>Wi-Fi client and hotspot at the same time</h2>
+
+<p class="q">"Can I use the Wi-Fi and hotspot capability of the Raspberry Pi at the same
+time?"</p>
+
+<p><b>Yes.</b> That is exactly what <code>ap_sta_setup.py</code> already does on your Pi 4,
+with a single radio and no extra hardware. The Broadcom chip supports one station link and
+one AP simultaneously; you just cannot expose that through a single interface name, so the
+script creates a <b>second virtual interface</b> on the same physical radio.</p>
+
+<div class="ascii">                    ┌─────────────── Raspberry Pi 4 ───────────────┐
+                    │        one physical radio (brcmfmac)          │
+  modem / hotspot   │                                               │
+   ────────wifi─────┼──▶ wlan0  STA (client)  ── internet, cloud    │
+                    │       │                                       │
+                    │       └── same chip, SAME CHANNEL             │
+                    │                                               │
+   ESP32 BEAM  ─────┼──▶ uap0   AP  192.168.50.1                    │
+   ESP32 STICK ─────┼──▶        hostapd + dnsmasq                   │
+                    │                                               │
+                    │    monitoring_control.py binds 0.0.0.0:5000   │
+                    │    → reachable on BOTH interfaces at once     │
+                    └───────────────────────────────────────────────┘</div>
+
+<h3>How the script does it, line by line</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Step</th><th>What happens</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>apt install hostapd dnsmasq iw rfkill</code></td><td>AP daemon, DHCP server, radio tools</td></tr>
+    <tr><td>2</td><td><code>iw dev wlan0 info</code> → read the channel</td><td>One radio ⇒ the AP <b>must</b> use the client's channel</td></tr>
+    <tr><td>3</td><td>Write <code>/etc/hostapd/hostapd.conf</code></td><td>SSID, WPA2, <code>channel=</code> from step 2</td></tr>
+    <tr><td>4</td><td>Write <code>/etc/dnsmasq.d/uap0.conf</code></td><td><code>port=0</code> disables DNS so it cannot fight systemd-resolved on :53</td></tr>
+    <tr><td>5</td><td><code>iw dev wlan0 interface add uap0 type __ap</code></td><td><b>The trick.</b> A second virtual netdev on the same chip</td></tr>
+    <tr><td>6</td><td>Mark <code>uap0</code> unmanaged (NM) / <code>denyinterfaces</code> (dhcpcd)</td><td>Stops the network manager stealing the static IP back</td></tr>
+    <tr><td>7</td><td><code>systemctl unmask hostapd</code>, enable all three units</td><td>Raspberry Pi OS ships hostapd masked</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The limits — know these before you rely on it</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Limit</th><th>Consequence</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td><b>One channel for both</b></td><td>The AP is forced onto whatever channel <code>wlan0</code> joined</td><td>The watchdog below, or a USB dongle</td></tr>
+    <tr><td><b>wlan0 moves channel ⇒ AP dies</b></td><td>New modem on channel 11, hostapd still on 6 → the ESP32s silently stop associating</td><td><b>The watchdog below</b> — this is your "different modems" problem</td></tr>
+    <tr><td>2.4 GHz only</td><td>No 5 GHz AP in concurrent mode</td><td>None needed — the ESP32 is 2.4 GHz only anyway</td></tr>
+    <tr><td>Shared airtime</td><td>Client traffic and AP traffic split one radio</td><td>Fine at your 1–2 Hz telemetry rate</td></tr>
+    <tr><td>Practical client count</td><td>~8 clients before it gets unhappy</td><td>You have two</td></tr>
+    <tr><td><code>nmcli device wifi hotspot</code> does <b>not</b> work here</td><td>It reconfigures <code>wlan0</code> itself and <b>drops your client link</b></td><td>That is precisely why <code>uap0</code> exists</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Hardening: make the AP follow the client's channel automatically</h3>
+
+<p>Your <code>README_AP_STA.md</code> says to re-run the setup script after moving to a
+different router. You can automate that. This is the single most valuable addition for a
+machine that meets a new modem every week.</p>
+
+<pre><code>sudo nano /usr/local/sbin/ap-channel-follow.sh
+sudo chmod +x /usr/local/sbin/ap-channel-follow.sh</code></pre>
+
+<pre><code>#!/bin/bash
+# Keep the uap0 access point on the same channel as the wlan0 client link.
+#
+# A one-radio Pi cannot run them on different channels. When wlan0 associates
+# with a new modem on another channel, hostapd keeps advertising the OLD channel
+# and the ESP32s silently stop being able to join. This re-syncs and restarts it.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+CONF=/etc/hostapd/hostapd.conf
+
+cur=$(iw dev wlan0 info | awk '$1=="channel"{print $2}')
+[ -z "${cur:-}" ] && exit 0                    # wlan0 not associated: nothing to follow
+
+want=$(awk -F= '$1=="channel"{print $2}' "$CONF")
+[ "$cur" = "$want" ] && exit 0                 # already in sync, cheap no-op
+
+logger -t ap-channel-follow "wlan0 moved to channel $cur (hostapd had $want) -- resyncing"
+sed -i "s/^channel=.*/channel=$cur/" "$CONF"
+systemctl restart hostapd</code></pre>
+
+<pre><code>sudo nano /etc/systemd/system/ap-channel-follow.service</code></pre>
+<pre><code>[Unit]
+Description=Re-sync the uap0 AP channel to the wlan0 client channel
+After=hostapd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-channel-follow.sh</code></pre>
+
+<pre><code>sudo nano /etc/systemd/system/ap-channel-follow.timer</code></pre>
+<pre><code>[Unit]
+Description=Check every minute whether wlan0 changed channel
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target</code></pre>
+
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now ap-channel-follow.timer
+systemctl list-timers ap-channel-follow.timer      # confirm it is scheduled
+journalctl -t ap-channel-follow -f                 # watch it work</code></pre>
+
+<div class="note">
+<b>The bulletproof alternative: a second radio.</b> A ~£8 USB Wi-Fi dongle removes the
+shared-channel constraint entirely — run the AP on one radio and the client on the other, on
+independent channels, and delete the watchdog. In <code>ap_sta_setup.py</code> set
+<code>AP_IFACE = "wlan1"</code> and remove the <code>iw dev wlan0 interface add</code> line
+from the bring-up script (the dongle is already a real interface). Pin the name with a
+udev rule so it does not swap between <code>wlan0</code> and <code>wlan1</code> across
+reboots. If this Pi is going onto a machine you cannot easily reach, it is worth the £8.
+</div>
+
+<h2 id="bringup"><span class="num">7</span>Bring-up order (do it in this sequence)</h2>
+
+<ol>
+  <li><b>Free the UART</b> — <code>raspi-config</code>: serial console off, serial hardware
+      on. Optionally <code>dtoverlay=disable-bt</code>. Reboot.</li>
+  <li><b>Join the field Wi-Fi as a client</b> (<code>nmtui</code>) so the AP script can detect
+      a channel and the Pi has internet for the cloud thread.</li>
+  <li><b>Set the country code</b> in <code>ap_sta_setup.py</code> (<code>COUNTRY</code>) and in
+      <code>raspi-config</code> → Localisation. A wrong regulatory domain silently kills
+      transmit power.</li>
+  <li><b>Run the AP setup</b> — <code>sudo python3 ap_sta_setup.py</code>, then reboot.
+      Verify: <code>iw dev</code> lists <code>uap0</code>, <code>ip addr show uap0</code> shows
+      <code>192.168.50.1</code>, <code>iw dev wlan0 link</code> still shows the client link.</li>
+  <li><b>Install the channel-follow timer</b> (section 6).</li>
+  <li><b>Repoint the ESP32s</b> to <code>RPi_AP</code> / <code>192.168.50.1:5000</code> —
+      remember NVS beats the constants (section 4).</li>
+  <li><b>Test the program by hand first</b>, in the foreground, so you see the tracebacks:
+      <code>cd ~/ESP_Advanced_Project/raspberry_pi &amp;&amp; GEOMIND_APIKEY=... python3 monitoring_control.py --http-port 5000</code></li>
+  <li><b>Only then install the systemd unit</b> (section 2) and
+      <code>sudo systemctl enable --now excavator-monitor</code>.</li>
+  <li><b>Reboot and verify unattended</b> — this is the real test:
+      <code>sudo reboot</code>, wait, then
+      <code>systemctl status excavator-monitor</code>,
+      <code>sudo python3 who_is_connected.py</code>,
+      <code>curl -s http://192.168.50.1:5000/status</code>.</li>
+</ol>
+
+<h2 id="trouble"><span class="num">8</span>Troubleshooting</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Symptom</th><th>Likely cause</th><th>Check / fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Service says <code>active (running)</code> but <code>journalctl -f</code> is empty</td>
+      <td>Python is block-buffering stdout</td>
+      <td>Add <code>Environment=PYTHONUNBUFFERED=1</code></td>
+    </tr>
+    <tr>
+      <td><code>ModuleNotFoundError: No module named 'dwin_lcd'</code></td>
+      <td><code>WorkingDirectory=</code> missing or wrong</td>
+      <td>Must be the <code>raspberry_pi/</code> folder</td>
+    </tr>
+    <tr>
+      <td><code>FileNotFoundError: Driver_name_database.xlsx</code></td>
+      <td>Same cause — the <code>--driver-csv</code> path is relative</td>
+      <td>Fix <code>WorkingDirectory=</code>, or pass an absolute path</td>
+    </tr>
+    <tr>
+      <td><code>Permission denied: '/dev/serial0'</code></td>
+      <td>Service user is not in <code>dialout</code></td>
+      <td><code>SupplementaryGroups=dialout</code>, or <code>sudo usermod -aG dialout pi</code></td>
+    </tr>
+    <tr>
+      <td><code>DWIN not responding</code> at boot but fine by hand</td>
+      <td>Serial console still owns the UART</td>
+      <td><code>raspi-config</code> → Serial Port → login shell <b>No</b></td>
+    </tr>
+    <tr>
+      <td>Boot hangs ~60 s before the panel lights up</td>
+      <td><code>network-online.target</code> waiting for a modem that is not there</td>
+      <td>Drop it; use <code>wait-for-net.sh ap 45</code> (section 3)</td>
+    </tr>
+    <tr>
+      <td><code>OSError: [Errno 99] Cannot assign requested address</code></td>
+      <td>Bound a specific IP before the interface existed</td>
+      <td>Use <code>--http-host 0.0.0.0</code>, or wait for <code>uap0</code></td>
+    </tr>
+    <tr>
+      <td><code>OSError: [Errno 98] Address already in use</code></td>
+      <td>A hand-started copy is still holding :5000</td>
+      <td><code>sudo ss -lptn 'sport = :5000'</code> then kill it</td>
+    </tr>
+    <tr>
+      <td>AP does not appear / ESP32 cannot join</td>
+      <td>Channel drift after a modem change — <b>the most common one</b></td>
+      <td><code>iw dev wlan0 link</code> vs <code>channel=</code> in the hostapd conf; install the follow timer</td>
+    </tr>
+    <tr>
+      <td><code>hostapd</code> will not start</td>
+      <td>It ships masked</td>
+      <td><code>sudo systemctl unmask hostapd</code>; <code>journalctl -u hostapd -b</code></td>
+    </tr>
+    <tr>
+      <td>ESP32 associates but gets no IP</td>
+      <td>dnsmasq not bound to <code>uap0</code></td>
+      <td><code>journalctl -u dnsmasq -b</code>; confirm <code>ip addr show uap0</code></td>
+    </tr>
+    <tr>
+      <td>ESP32 has an IP but <code>[post] failed</code></td>
+      <td>Wrong host/port in NVS, or wrong receiver running</td>
+      <td>ESP web portal; <code>curl http://192.168.50.1:5000/status</code> from the Pi</td>
+    </tr>
+    <tr>
+      <td>ESP32 joins the old modem after you changed the source</td>
+      <td>NVS overrides <code>DEF_WIFI_SSID</code></td>
+      <td>Web portal, or <code>pio run -t erase</code></td>
+    </tr>
+    <tr>
+      <td>Weak range / clients drop at full reach</td>
+      <td>Wrong country code ⇒ reduced TX power</td>
+      <td><code>COUNTRY</code> in <code>ap_sta_setup.py</code> + <code>raspi-config</code>; check RSSI with <code>who_is_connected.py</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+<p class="small">Written against this repository: <code>raspberry_pi/monitoring_control.py</code>,
+<code>raspberry_pi/ap_sta_setup.py</code>, <code>raspberry_pi/sensor_receiver.py</code>,
+<code>ESP32_Beam/src/main.cpp</code>, <code>ESP32_Stick/src/main.cpp</code>. Companion
+document: <code>ESP32_WEB_CONFIG_GUIDE.html</code>.</p>
+
+</div>
+</body>
+</html>
